@@ -159,7 +159,7 @@ export function ItemForm() {
       </div>
 
       <form onSubmit={submit} noValidate className="flex-1 flex flex-col">
-        <div className="p-4 sm:p-5 grid gap-4 flex-1 overflow-y-auto min-h-[320px]">
+        <div className="p-4 sm:p-5 h-[400px] overflow-y-auto">
 
           {/* ================= PESTAÑA: BÁSICO ================= */}
           {activeTab === 'basico' && (
