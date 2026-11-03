@@ -1,0 +1,17 @@
+{
+  "name": "Depa - Gestor de Compras",
+  "short_name": "Depa",
+  "description": "Organiza las compras de tu primer departamento.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#1f5c45",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -47,10 +47,10 @@ const reducer = (s: AppState, a: Action): AppState => {
     case 'add':
       return { ...s, items: [a.item, ...s.items] };
     case 'update':
-      return { 
-        ...s, 
+      return {
+        ...s,
         items: s.items.map((i) => (i.id === a.item.id ? a.item : i)),
-        editingItem: null 
+        editingItem: null
       };
     case 'remove':
       return { ...s, items: s.items.filter((i) => i.id !== a.id) };
@@ -60,16 +60,16 @@ const reducer = (s: AppState, a: Action): AppState => {
       return { ...s, items };
     }
     case 'toggle-bought':
-      return { 
-        ...s, 
-        items: s.items.map((i) => i.id === a.id ? { ...i, bought: a.bought } : i) 
+      return {
+        ...s,
+        items: s.items.map((i) => i.id === a.id ? { ...i, bought: a.bought } : i)
       };
     case 'set-wishlist':
-      return { 
-        ...s, 
+      return {
+        ...s,
         items: s.items.map((i) => i.id === a.id
-          ? { ...i, wishlist: a.wishlist, bought: a.wishlist ? false : i.bought } 
-          : i) 
+          ? { ...i, wishlist: a.wishlist, bought: a.wishlist ? false : i.bought }
+          : i)
       };
     case 'set-prefs':
       return { ...s, prefs: { ...s.prefs, ...a.patch } };
@@ -113,10 +113,10 @@ interface AppContextValue extends AppState {
   addCategory: (name: string) => boolean;
   setView: (v: View) => void;
   setEditingItem: (item: Item | null) => void;
-  
+
   theme: Theme;
   setTheme: (t: Theme) => void;
-  
+
   toast: ToastState | null;
   showToast: (message: string, opts?: { actionLabel?: string; onAction?: () => void }) => void;
   hideToast: () => void;
@@ -138,7 +138,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
-  
+
   const toastTimer = useRef<number | null>(null);
   const announceTimer = useRef<number | null>(null);
 
@@ -147,9 +147,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const items = loadItems();
     const categories = loadCategories();
     const prefs = loadPrefs();
-    
+
     if (mergeItemCategories(items, categories)) saveCategories(categories);
-    
+
     dispatch({ type: 'init', payload: { items, categories, prefs, view: 'list' } });
   }, []);
 
@@ -216,10 +216,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => media.removeEventListener('change', onChange);
   }, [theme]);
 
+
   // --- 3. SERVICE WORKER (PWA) ---
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('Service Worker falló:', err);
+      });
     }
   }, []);
 
@@ -245,16 +248,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = window.setTimeout(hideToast, opts?.onAction ? 7000 : 3400);
   }, [hideToast]);
 
+
   // --- 5. ACCIONES DE DATOS ---
   const addItem = useCallback<AppContextValue['addItem']>((draft) => {
     const item: Item = { ...draft, id: createId(), createdAt: Date.now(), bought: false };
     dispatch({ type: 'add', item });
-    
+
     if (draft.wishlist) {
       announce(`${item.name} agregado a la wishlist`);
-      showToast('Artículo agregado a la wishlist', { 
-        actionLabel: 'Ver wishlist', 
-        onAction: () => dispatch({ type: 'set-view', view: 'wishlist' }) 
+      showToast('Artículo agregado a la wishlist', {
+        actionLabel: 'Ver wishlist',
+        onAction: () => dispatch({ type: 'set-view', view: 'wishlist' })
       });
     } else {
       announce(`${item.name} agregado a la lista`);
@@ -273,7 +277,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const index = state.items.findIndex((i) => i.id === id);
     if (index === -1) return;
     const removed = state.items[index];
-    
+
     dispatch({ type: 'remove', id });
     showToast(`"${removed.name}" eliminado`, {
       actionLabel: 'Deshacer',
@@ -293,10 +297,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setWishlist = useCallback<AppContextValue['setWishlist']>((id, wishlist) => {
     const item = state.items.find((i) => i.id === id);
     if (!item || item.wishlist === wishlist) return false;
-    
+
     const prev = { wishlist: item.wishlist, bought: item.bought };
     dispatch({ type: 'set-wishlist', id, wishlist });
-    
+
     const msg = wishlist ? `"${item.name}" guardado en la wishlist` : `"${item.name}" movido a la lista de compras`;
     announce(msg);
     showToast(msg, {
@@ -329,15 +333,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // --- 6. VALOR DEL CONTEXTO Y RETORNO ---
   const value = useMemo<AppContextValue>(() => ({
-    ...state, 
+    ...state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
     setPrefs, addCategory, setView, setEditingItem,
     theme, setTheme,
     toast, showToast, hideToast, announce,
   }), [
-    state, 
-    addItem, updateItem, removeItem, toggleBought, setWishlist, 
-    setPrefs, addCategory, setView, setEditingItem, 
+    state,
+    addItem, updateItem, removeItem, toggleBought, setWishlist,
+    setPrefs, addCategory, setView, setEditingItem,
     theme, setTheme,
     toast, showToast, hideToast, announce
   ]);

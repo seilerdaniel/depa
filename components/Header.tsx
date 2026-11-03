@@ -4,9 +4,11 @@ import { useMemo } from 'react';
 import { useApp } from '@/state/AppProvider';
 import { money, pluralize } from '@/lib/utils';
 import { Icon } from './Icon';
+import { PWAInstall } from './PWAInstall';
 
 export function Header() {
-  const { items, prefs, setPrefs, setView } = useApp();
+  // 1. Agregamos theme y setTheme aquí
+  const { items, prefs, setPrefs, setView, theme, setTheme } = useApp();
 
   const { pendingTotal, pendingCount, boughtTotal, boughtCount, grand, monthly, wishCount, wishTotal } = useMemo(() => {
     let pendingTotal = 0, boughtTotal = 0, monthly = 0, wishTotal = 0;
@@ -43,6 +45,13 @@ export function Header() {
     }
   };
 
+  // 2. Función para alternar el tema
+  const toggleTheme = () => {
+    if (theme === 'light') setTheme('dark');
+    else if (theme === 'dark') setTheme('system');
+    else setTheme('light');
+  };
+
   return (
     <header className="pt-7 pb-1">
       <div className="mx-auto w-[min(1180px,100%-32px)]">
@@ -56,9 +65,25 @@ export function Header() {
               <p className="text-sm text-muted">Organizá las compras de tu primer departamento.</p>
             </div>
           </div>
-          <p className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-line rounded-full bg-surface text-muted text-xs font-semibold">
-            <Icon name="local" size={13} /> 100% local
-          </p>
+          
+          {/* 3. CONTENEDOR DE ACCIONES (PWA, Tema, Badge) */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <PWAInstall />
+            
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors"
+              title={`Tema actual: ${theme}`}
+            >
+              {theme === 'light' && <Icon name="sun" size={18} />}
+              {theme === 'dark' && <Icon name="moon" size={18} />}
+              {theme === 'system' && <Icon name="monitor" size={18} />}
+            </button>
+
+            <p className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-line rounded-full bg-surface text-muted text-xs font-semibold">
+              <Icon name="local" size={13} /> 100% local
+            </p>
+          </div>
         </div>
 
         <section className="p-4 border border-line rounded-2xl bg-surface shadow-soft" aria-label="Resumen financiero">
