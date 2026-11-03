@@ -8,8 +8,8 @@ import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
 } from '@/lib/storage';
-import { DEFAULT_CATEGORIES, DEFAULT_PREFS } from '@/lib/config';
-import { createId } from '@/lib/utils';
+import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
+import { createId, normalizeLabel } from '@/lib/utils';
 import type { Item, Prefs, View } from '@/lib/types';
 
 export type Theme = 'light' | 'dark' | 'system';
@@ -24,10 +24,11 @@ interface AppState {
   view: View;
   ready: boolean;
   editingItem: Item | null;
+  selectedItem: Item | null;
 }
 
 type Action =
-  | { type: 'init'; payload: Omit<AppState, 'ready' | 'editingItem'> }
+  | { type: 'init'; payload: Omit<AppState, 'ready' | 'editingItem' | 'selectedItem'> & { selectedItem?: Item | null } }
   | { type: 'add'; item: Item }
   | { type: 'update'; item: Item }
   | { type: 'remove'; id: string }
@@ -36,13 +37,21 @@ type Action =
   | { type: 'set-wishlist'; id: string; wishlist: boolean }
   | { type: 'set-prefs'; patch: Partial<Prefs> }
   | { type: 'add-category'; name: string }
+  | { type: 'update-category'; oldName: string; newName: string }
+  | { type: 'delete-category'; name: string }
   | { type: 'set-view'; view: View }
-  | { type: 'set-editing'; item: Item | null };
+  | { type: 'set-editing'; item: Item | null }
+  | { type: 'set-selected'; item: Item | null };
 
 const reducer = (s: AppState, a: Action): AppState => {
   switch (a.type) {
     case 'init':
-      return { ...a.payload, ready: true, editingItem: null };
+      return {
+        ...a.payload,
+        ready: true,
+        editingItem: null,
+        selectedItem: a.payload.selectedItem ?? null,
+      };
     case 'add':
       return { ...s, items: [a.item, ...s.items] };
     case 'update':
@@ -74,10 +83,24 @@ const reducer = (s: AppState, a: Action): AppState => {
       return { ...s, prefs: { ...s.prefs, ...a.patch } };
     case 'add-category':
       return { ...s, categories: [...s.categories, a.name] };
+    case 'update-category':
+      return {
+        ...s,
+        categories: s.categories.map((c) => (c === a.oldName ? a.newName : c)),
+        items: s.items.map((i) => (i.category === a.oldName ? { ...i, category: a.newName } : i)),
+      };
+    case 'delete-category':
+      return {
+        ...s,
+        categories: s.categories.filter((c) => c !== a.name),
+        items: s.items.map((i) => (i.category === a.name ? { ...i, category: 'Otros' } : i)),
+      };
     case 'set-view':
       return { ...s, view: a.view };
     case 'set-editing':
       return { ...s, editingItem: a.item };
+    case 'set-selected':
+      return { ...s, selectedItem: a.item };
     default:
       return s;
   }
@@ -90,6 +113,7 @@ const initialState: AppState = {
   view: 'list',
   ready: false,
   editingItem: null,
+  selectedItem: null,
 };
 
 // ==========================================
@@ -110,13 +134,18 @@ interface AppContextValue extends AppState {
   setWishlist: (id: string, wishlist: boolean) => boolean;
   setPrefs: (patch: Partial<Prefs>) => void;
   addCategory: (name: string) => boolean;
+  updateCategory: (oldName: string, newName: string) => boolean;
+  deleteCategory: (name: string) => void;
   setView: (v: View) => void;
   setEditingItem: (item: Item | null) => void;
+  setSelectedItem: (item: Item | null) => void;
+  
+  isCategoryManagerOpen: boolean;
+  setCategoryManagerOpen: (open: boolean) => void;
 
   theme: Theme;
   setTheme: (t: Theme) => void;
-  
-  // NUEVO: Funciones de Backup
+
   exportData: () => void;
   importData: (file: File) => void;
 
@@ -140,7 +169,8 @@ export const useApp = () => {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [theme, setThemeState] = useState<Theme>('system');
+  const [theme, setTheme] = useState<Theme>('system');
+  const [isCategoryManagerOpen, setCategoryManagerOpen] = useState(false);
 
   const toastTimer = useRef<number | null>(null);
   const announceTimer = useRef<number | null>(null);
@@ -191,22 +221,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // --- 2. EFECTOS DE TEMA (MODO OSCURO) ---
   useEffect(() => {
-    const saved = localStorage.getItem('depa.theme') as Theme | null;
-    if (saved) setThemeState(saved);
-  }, []);
-
-  const setTheme = useCallback((t: Theme) => {
-    setThemeState(t);
-    localStorage.setItem('depa.theme', t);
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
-    if (t === 'system') {
+
+    if (theme === 'system') {
       const sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(sys);
     } else {
-      root.classList.add(t);
+      root.classList.add(theme);
     }
-  }, []);
+    localStorage.setItem('depa.theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     if (theme !== 'system') return;
@@ -218,7 +243,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
   }, [theme]);
-
 
   // --- 3. SERVICE WORKER (PWA) ---
   useEffect(() => {
@@ -250,7 +274,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToast({ id: Date.now(), message, actionLabel: opts?.actionLabel, onAction: opts?.onAction });
     toastTimer.current = window.setTimeout(hideToast, opts?.onAction ? 7000 : 3400);
   }, [hideToast]);
-
 
   // --- 5. ACCIONES DE DATOS ---
   const addItem = useCallback<AppContextValue['addItem']>((draft) => {
@@ -326,6 +349,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [state.categories]);
 
+  const updateCategory = useCallback<AppContextValue['updateCategory']>((oldName, newName) => {
+    const trimmed = normalizeLabel(newName, CATEGORY_MAX_LENGTH);
+    if (!trimmed || trimmed === oldName) return false;
+    if (state.categories.some(c => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) return false; 
+    
+    dispatch({ type: 'update-category', oldName, newName: trimmed });
+    showToast('Categoría actualizada');
+    return true;
+  }, [state.categories, showToast]);
+
+  const deleteCategory = useCallback<AppContextValue['deleteCategory']>((name) => {
+    dispatch({ type: 'delete-category', name });
+    showToast(`Categoría "${name}" eliminada. Sus artículos se movieron a "Otros".`);
+  }, [showToast]);
+
   const setView = useCallback<AppContextValue['setView']>((view) => {
     dispatch({ type: 'set-view', view });
   }, []);
@@ -334,6 +372,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'set-editing', item });
   }, []);
 
+  const setSelectedItem = useCallback<AppContextValue['setSelectedItem']>((item) => {
+    dispatch({ type: 'set-selected', item });
+  }, []);
 
   // --- 6. FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR) ---
   const exportData = useCallback(() => {
@@ -359,21 +400,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const content = e.target?.result as string;
         const parsed = JSON.parse(content);
-        
+
         if (!parsed.items || !Array.isArray(parsed.items)) {
           throw new Error('Formato de archivo inválido');
         }
 
-        dispatch({ 
-          type: 'init', 
-          payload: { 
-            items: parsed.items, 
-            categories: parsed.categories || DEFAULT_CATEGORIES, 
-            prefs: parsed.prefs || DEFAULT_PREFS, 
-            view: 'list' 
-          } 
+        dispatch({
+          type: 'init',
+          payload: {
+            items: parsed.items,
+            categories: parsed.categories || DEFAULT_CATEGORIES,
+            prefs: parsed.prefs || DEFAULT_PREFS,
+            view: 'list'
+          }
         });
-        
+
         showToast('Datos importados correctamente');
         dispatch({ type: 'set-view', view: 'list' });
       } catch (err) {
@@ -387,16 +428,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     ...state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, setView, setEditingItem,
+    setPrefs, addCategory, updateCategory, deleteCategory, 
+    setView, setEditingItem, setSelectedItem,
+    isCategoryManagerOpen, setCategoryManagerOpen,
     theme, setTheme,
-    exportData, importData, // <-- NUEVOS MÉTODOS AGREGADOS
+    exportData, importData,
     toast, showToast, hideToast, announce,
   }), [
     state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, setView, setEditingItem,
+    setPrefs, addCategory, updateCategory, deleteCategory, 
+    setView, setEditingItem, setSelectedItem,
+    isCategoryManagerOpen,
     theme, setTheme,
-    exportData, importData, // <-- NUEVAS DEPENDENCIAS AGREGADAS
+    exportData, importData,
     toast, showToast, hideToast, announce
   ]);
 

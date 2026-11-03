@@ -21,7 +21,7 @@ export const PRIORITY = new Map(PRIORITIES.map((p) => [p.id, p]));
 
 export const STATUS_FILTERS: ReadonlySet<StatusFilter> = new Set(['todos', 'pendientes', 'comprados']);
 export const SORT_MODES: ReadonlySet<SortMode> = new Set(['prioridad', 'precio-desc', 'precio-asc', 'nombre']);
-export const TAB_ORDER = ['list', 'wishlist', 'moodboard', 'dashboard'] as const;
+export const TAB_ORDER = ['list', 'wishlist', 'moodboard', 'dashboard', 'history'] as const;
 
 export const STORAGE_KEYS = {
   items: 'depa.items.v1',

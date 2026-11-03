@@ -9,6 +9,8 @@ import { ListView } from './ListView';
 import { Moodboard } from './Moodboard';
 import { Dashboard } from './Dashboard';
 import { Toast } from './Toast';
+import { ItemModal } from './ItemModal';
+import { CategoryManager } from './CategoryManager';
 
 function Shell() {
   const { view, ready, setEditingItem } = useApp();
@@ -33,31 +35,34 @@ function Shell() {
         <div className="mb-4">
           <ViewTabs />
         </div>
-        <div className="grid gap-6 pt-2 items-start md:grid-cols-[350px_minmax(0,1fr)]">
+
+        {/* Agregamos min-w-0 a los hijos del grid para evitar desbordes */}
+        <div className="grid gap-6 pt-2 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
           {view === 'list' && (
             <>
-              <aside className="lg:sticky lg:top-4">
+              <aside className="lg:sticky lg:top-4 min-w-0">
                 <ItemForm />
               </aside>
-              <ListView mode="list" />
+              <div className="min-w-0">
+                <ListView mode="list" />
+              </div>
             </>
           )}
 
           {view === 'wishlist' && (
-            <div className="lg:col-span-2 animate-in fade-in duration-300">
+            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
               <ListView mode="wishlist" />
             </div>
           )}
 
           {view === 'moodboard' && (
-            <div className="lg:col-span-2 animate-in fade-in duration-300">
+            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
               <Moodboard />
             </div>
           )}
 
-          {/* AGREGAR ESTE BLOQUE PARA EL DASHBOARD */}
           {view === 'dashboard' && (
-            <div className="lg:col-span-2 animate-in fade-in duration-300">
+            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
               <Dashboard />
             </div>
           )}
@@ -65,6 +70,8 @@ function Shell() {
       </main>
 
       <Toast />
+      <ItemModal />
+      <CategoryManager />
     </div>
   );
 }

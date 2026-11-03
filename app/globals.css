@@ -2,6 +2,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+  /* ... (tus variables @theme actuales se mantienen) ... */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -28,8 +29,7 @@
 :root {
   color-scheme: light dark;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  
-  /* MODO CLARO */
+  /* Modo Claro */
   --bg: #f6f4ef;
   --bg-glow: rgba(31,92,69,.1);
   --surface: #fffdfa; 
@@ -58,18 +58,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* MODO OSCURO OPTIMIZADO */
-    --bg: #0f0f0d; /* Fondo más profundo */
+    /* Modo Oscuro Optimizado (Más contraste) */
+    --bg: #0a0a09;       
     --bg-glow: rgba(126,207,168,.05);
-    --surface: #1a1916; /* Superficies más claras para hacer contraste */
-    --surface-2: #23211d; 
-    --surface-3: #2e2b26;
+    --surface: #161513;  
+    --surface-2: #1f1e1b; 
+    --surface-3: #2a2823;
     --ink: #f2efe8; 
     --ink-soft: #d8d3c8; 
     --muted: #9c9588;
-    --line: #33302a; /* Bordes más visibles */
-    --line-strong: #4a463e;
-    --accent: #8ce6bb; /* Verde más brillante */
+    --line: #2e2b26; 
+    --line-strong: #423e36;
+    --accent: #8ce6bb; 
     --accent-ink: #b3f5d2; 
     --accent-soft: rgba(140,230,187,.12); 
     --on-accent: #0a1c14;
@@ -97,8 +97,21 @@ body {
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
+select { appearance: none; -webkit-appearance: none; -moz-appearance: none; }
+
+/* Arreglar el ícono nativo del calendario */
+input[type="month"]::-webkit-calendar-picker-indicator,
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.5;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+input[type="month"]::-webkit-calendar-picker-indicator:hover,
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+input[type="month"]:focus,
+input[type="date"]:focus {
+  outline: none;
 }
