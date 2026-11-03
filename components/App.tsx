@@ -28,13 +28,12 @@ function Shell() {
   return (
     <div className="min-h-[100dvh] flex flex-col">
       <Header />
-      
+
       <main className="flex-1 mx-auto w-[min(1180px,100%-32px)] py-4 pb-10 outline-none" id="contenido" tabIndex={-1}>
         <div className="mb-4">
           <ViewTabs />
         </div>
-
-        <div className="grid gap-6 pt-2 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
+        <div className="grid gap-6 pt-2 items-start md:grid-cols-[350px_minmax(0,1fr)]">
           {view === 'list' && (
             <>
               <aside className="lg:sticky lg:top-4">
