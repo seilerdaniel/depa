@@ -1,26 +1,77 @@
 @import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-on: var(--on-accent);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-urgent: var(--urgent);
+  --color-urgent-soft: var(--urgent-soft);
+  --color-medium: var(--medium);
+  --color-medium-soft: var(--medium-soft);
+  --color-low: var(--low);
+  --color-low-soft: var(--low-soft);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  color-scheme: light dark;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg: #f6f4ef;
+  --bg-glow: rgba(31,92,69,.1);
+  --surface: #fffdfa; --surface-2: #f1eee6; --surface-3: #e8e3d9;
+  --ink: #1f1e1a; --ink-soft: #423e36; --muted: #6f695e;
+  --line: #e5e0d5; --line-strong: #d3ccbe;
+  --accent: #1f5c45; --accent-ink: #174936; --accent-soft: #e2efe8; --on-accent: #fff;
+  --danger: #b3261e; --danger-soft: #fbe8e5;
+  --urgent: #b3261e; --urgent-soft: #fbe7e4;
+  --medium: #8a5a00; --medium-soft: #fdf0d5;
+  --low: #226b45; --low-soft: #e3f2e9;
+  --shadow: 0 1px 2px rgba(31,30,26,.04), 0 10px 28px -16px rgba(31,30,26,.25);
+  --ring: 0 0 0 3px rgba(31,92,69,.22);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #14130f; --bg-glow: rgba(126,207,168,.09);
+    --surface: #1d1c18; --surface-2: #262420; --surface-3: #302d27;
+    --ink: #f2efe8; --ink-soft: #d8d3c8; --muted: #a49d90;
+    --line: #312e28; --line-strong: #423e36;
+    --accent: #7ecfa8; --accent-ink: #a9e5c8; --accent-soft: rgba(78,160,124,.16); --on-accent: #10231a;
+    --danger: #ff8a7a; --danger-soft: rgba(255,122,104,.14);
+    --urgent: #ff8a7a; --urgent-soft: rgba(255,122,104,.14);
+    --medium: #f0b64b; --medium-soft: rgba(240,182,75,.14);
+    --low: #79d3a4; --low-soft: rgba(121,211,164,.14);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -18px rgba(0,0,0,.8);
+    --ring: 0 0 0 3px rgba(126,207,168,.28);
   }
 }
 
+html { -webkit-text-size-adjust: 100%; }
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100dvh;
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: radial-gradient(900px 420px at 88% -12%, var(--bg-glow), transparent 68%), var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Ocultar las flechas nativas de los select para reemplazarlas por las nuestras */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
 }
