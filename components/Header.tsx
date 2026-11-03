@@ -5,6 +5,7 @@ import { useApp } from '@/state/AppProvider';
 import { money, pluralize } from '@/lib/utils';
 import { Icon } from './Icon';
 import { PWAInstall } from './PWAInstall';
+import { NotificationBell } from './NotificationBell';
 
 export function Header() {
   const { items, prefs, setPrefs, setView, theme, setTheme } = useApp();
@@ -63,9 +64,10 @@ export function Header() {
               <p className="text-sm text-muted">Organizá las compras de tu primer departamento.</p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2 sm:gap-3">
             <PWAInstall />
+            <NotificationBell />
             <button onClick={toggleTheme} className="p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors" title={`Tema: ${theme}`}>
               {theme === 'light' && <Icon name="sun" size={18} />}
               {theme === 'dark' && <Icon name="moon" size={18} />}

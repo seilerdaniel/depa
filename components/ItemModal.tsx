@@ -1,12 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import { useApp } from '@/state/AppProvider';
 import { money, formatDimensions, formatInstallments, getItemImage, formatMonth } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import { Icon } from './Icon';
 
 export function ItemModal() {
+  // 1. Los hooks SIEMPRE van primero
+  const [isExpanded, setIsExpanded] = useState(false);
   const { selectedItem, setSelectedItem } = useApp();
+
+  // 2. Después de los hooks, hacemos el retorno temprano
   if (!selectedItem) return null;
 
   const item = selectedItem;
@@ -29,8 +34,21 @@ export function ItemModal() {
 
         <div className="overflow-y-auto">
           {src && (
-            <div className="w-full aspect-video sm:aspect-[21/9] bg-surface-2 relative">
-              <img src={src} alt={item.name} className="w-full h-full object-contain sm:object-cover" />
+            <div className={`relative w-full bg-surface-2 flex items-center justify-center transition-all duration-300 ${isExpanded ? 'h-[60vh]' : 'aspect-video sm:aspect-[21/9]'}`}>
+              <img 
+                src={src} 
+                alt={item.name} 
+                className={`w-full h-full transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`} 
+              />
+              
+              {/* Botón flotante para expandir/minimizar */}
+              <button 
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg"
+                title={isExpanded ? "Ajustar a pantalla" : "Expandir imagen"}
+              >
+                <Icon name={isExpanded ? 'minimize' : 'maximize'} size={16} />
+              </button>
             </div>
           )}
 
