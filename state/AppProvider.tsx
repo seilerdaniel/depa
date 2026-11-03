@@ -12,7 +12,6 @@ import { DEFAULT_CATEGORIES, DEFAULT_PREFS } from '@/lib/config';
 import { createId } from '@/lib/utils';
 import type { Item, Prefs, View } from '@/lib/types';
 
-// Agregamos el tipo Theme aquí
 export type Theme = 'light' | 'dark' | 'system';
 
 // ==========================================
@@ -116,6 +115,10 @@ interface AppContextValue extends AppState {
 
   theme: Theme;
   setTheme: (t: Theme) => void;
+  
+  // NUEVO: Funciones de Backup
+  exportData: () => void;
+  importData: (file: File) => void;
 
   toast: ToastState | null;
   showToast: (message: string, opts?: { actionLabel?: string; onAction?: () => void }) => void;
@@ -331,18 +334,69 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'set-editing', item });
   }, []);
 
-  // --- 6. VALOR DEL CONTEXTO Y RETORNO ---
+
+  // --- 6. FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR) ---
+  const exportData = useCallback(() => {
+    const data = {
+      items: state.items,
+      categories: state.categories,
+      prefs: state.prefs,
+      version: 1
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `depa-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Copia de seguridad descargada');
+  }, [state.items, state.categories, state.prefs, showToast]);
+
+  const importData = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const parsed = JSON.parse(content);
+        
+        if (!parsed.items || !Array.isArray(parsed.items)) {
+          throw new Error('Formato de archivo inválido');
+        }
+
+        dispatch({ 
+          type: 'init', 
+          payload: { 
+            items: parsed.items, 
+            categories: parsed.categories || DEFAULT_CATEGORIES, 
+            prefs: parsed.prefs || DEFAULT_PREFS, 
+            view: 'list' 
+          } 
+        });
+        
+        showToast('Datos importados correctamente');
+        dispatch({ type: 'set-view', view: 'list' });
+      } catch (err) {
+        showToast('Error al leer el archivo. Asegúrate de que sea un backup válido.');
+      }
+    };
+    reader.readAsText(file);
+  }, [showToast]);
+
+  // --- 7. VALOR DEL CONTEXTO Y RETORNO ---
   const value = useMemo<AppContextValue>(() => ({
     ...state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
     setPrefs, addCategory, setView, setEditingItem,
     theme, setTheme,
+    exportData, importData, // <-- NUEVOS MÉTODOS AGREGADOS
     toast, showToast, hideToast, announce,
   }), [
     state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
     setPrefs, addCategory, setView, setEditingItem,
     theme, setTheme,
+    exportData, importData, // <-- NUEVAS DEPENDENCIAS AGREGADAS
     toast, showToast, hideToast, announce
   ]);
 
