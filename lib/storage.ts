@@ -51,8 +51,13 @@ export function loadPrefs(): Prefs {
   const raw = readJSON<Record<string, unknown>>(STORAGE_KEYS.prefs, {});
   const prefs = raw && typeof raw === 'object' ? raw : {};
   const budgetValue = Number(prefs.budget);
-  const hasBudget = prefs.budget !== null && prefs.budget !== undefined && prefs.budget !== ''
-    && Number.isFinite(budgetValue) && budgetValue >= 0;
+  
+  const hasBudget =
+    prefs.budget !== null &&
+    prefs.budget !== undefined &&
+    prefs.budget !== '' &&
+    Number.isFinite(budgetValue) &&
+    budgetValue >= 0;
 
   return {
     sort: SORT_MODES.has(prefs.sort as any) ? (prefs.sort as Prefs['sort']) : DEFAULT_PREFS.sort,
@@ -63,6 +68,9 @@ export function loadPrefs(): Prefs {
     wishlistSort: SORT_MODES.has(prefs.wishlistSort as any) ? (prefs.wishlistSort as Prefs['wishlistSort']) : DEFAULT_PREFS.wishlistSort,
     wishlistCategory: cleanFilterValue(prefs.wishlistCategory),
     wishlistSubcategory: cleanFilterValue(prefs.wishlistSubcategory),
+    // Aquí agregamos las propiedades que faltaban y que causaban el error en Vercel:
+    viewMode: prefs.viewMode === 'table' ? 'table' : 'grid',
+    search: typeof prefs.search === 'string' ? prefs.search : '',
   };
 }
 
