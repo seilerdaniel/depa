@@ -75,7 +75,6 @@ export function ItemForm() {
         depth: editingItem.dimensions?.depth ? String(editingItem.dimensions.depth) : '',
         notes: editingItem.notes || '',
       });
-      setForm((f) => ({ ...f, notes: editingItem.notes || '' }));
       setErrors({});
       setPhotoStatus('');
     } else {
@@ -88,7 +87,6 @@ export function ItemForm() {
 
   const clearError = (key: keyof Errors) => setErrors((e) => ({ ...e, [key]: undefined }));
 
-  // Obtener subcategorías sugeridas basadas en la categoría seleccionada
   const subcategories = useMemo(() => {
     const names = new Map<string, string>();
     for (const it of items) {
@@ -129,7 +127,6 @@ export function ItemForm() {
     if (photoBusy) return;
     const errs: Errors = {};
 
-    // 1. Validaciones
     const name = normalizeLabel(form.name, 60);
     if (!name) errs.name = 'Ingresá el nombre del artículo.';
 
@@ -166,7 +163,6 @@ export function ItemForm() {
       return;
     }
 
-    // 2. Preparar objeto
     const dimensions = [h, w, d].some((v) => typeof v === 'number')
       ? { height: typeof h === 'number' ? h : null, width: typeof w === 'number' ? w : null, depth: typeof d === 'number' ? d : null }
       : null;
@@ -189,15 +185,13 @@ export function ItemForm() {
       notes: normalizeLabel(form.notes, 250)
     };
 
-    // 3. Guardar
     if (editingItem) {
       updateItem({ ...editingItem, ...itemData });
-      setEditingItem(null); // Salir del modo edición
+      setEditingItem(null);
     } else {
       addItem(itemData);
     }
 
-    // 4. Resetear formulario
     setForm(EMPTY);
     setErrors({});
     setPhotoStatus('');
@@ -219,17 +213,13 @@ export function ItemForm() {
 
   return (
     <section className="p-5 border border-line rounded-3xl bg-surface shadow-soft">
-
-      {/* Cabecera del Formulario */}
       <div className="flex justify-between items-start mb-4">
         <div>
           <h2 className="text-base font-semibold tracking-tight text-ink">
             {editingItem ? 'Editar artículo' : 'Agregar artículo'}
           </h2>
           <p className="text-sm text-muted mt-0.5">
-            {editingItem
-              ? 'Modificá los datos y guardá los cambios.'
-              : 'Completá lo básico; foto, cuotas, tienda y medidas son opcionales.'}
+            {editingItem ? 'Modificá los datos y guardá los cambios.' : 'Completá lo básico; foto, cuotas, tienda y medidas son opcionales.'}
           </p>
         </div>
         {editingItem && (
@@ -243,124 +233,64 @@ export function ItemForm() {
         )}
       </div>
 
-      <form onSubmit={submit} noValidate className="grid gap-3.5">
+      {/* FORMULARIO EN GRID DE 2 COLUMNAS (1 en móviles) */}
+      <form onSubmit={submit} noValidate className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        
+        <div className="sm:col-span-2">
+          <Field label="Nombre del artículo" error={errors.name}>
+            <input ref={nameRef} type="text" maxLength={60} placeholder="Ej. Heladera con freezer" value={form.name} onChange={(e) => { update('name', e.target.value); clearError('name'); }} className={inputCls(!!errors.name)} />
+          </Field>
+        </div>
 
-        {/* Nombre */}
-        <Field label="Nombre del artículo" error={errors.name}>
-          <input
-            ref={nameRef}
-            type="text"
-            maxLength={60}
-            placeholder="Ej. Heladera con freezer"
-            value={form.name}
-            onChange={(e) => { update('name', e.target.value); clearError('name'); }}
-            className={inputCls(!!errors.name)}
-          />
-        </Field>
-
-        {/* Categoría */}
-        <Field label="Categoría" error={errors.category}>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <select
-                value={form.category}
-                onChange={(e) => { update('category', e.target.value); clearError('category'); }}
-                className={`${inputCls(!!errors.category)} pr-10 appearance-none cursor-pointer`}
-              >
-                <option value="" disabled>Elegí una categoría</option>
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowCatCreator((s) => !s)}
-              aria-label="Crear nueva categoría"
-              aria-expanded={showCatCreator}
-              className="w-11 h-11 shrink-0 border border-line-strong rounded-xl bg-surface text-muted hover:border-accent hover:bg-accent-soft hover:text-accent-ink transition-colors flex items-center justify-center"
-            >
-              <Icon name="add" size={17} />
-            </button>
-          </div>
-
-          {showCatCreator && (
-            <div className="grid gap-1.5 mt-2 p-2.5 border border-dashed border-line-strong rounded-xl bg-surface-2 animate-in slide-in-from-top-2 duration-200">
-              <label htmlFor="new-category" className="text-xs font-semibold text-ink-soft">Nueva categoría</label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="new-category"
-                  type="text"
-                  maxLength={40}
-                  value={newCat}
-                  placeholder="Ej. Iluminación"
-                  onChange={(e) => { setNewCat(e.target.value); setNewCatErr(''); }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); createCat(); }
-                    if (e.key === 'Escape') setShowCatCreator(false);
-                  }}
-                  className="flex-1 min-h-[38px] px-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent"
-                />
-                <button
-                  type="button"
-                  onClick={createCat}
-                  className="min-h-[38px] px-3.5 rounded-xl bg-accent text-accent-on text-sm font-semibold hover:bg-accent-ink transition-colors"
-                >
-                  Crear
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowCatCreator(false); setNewCatErr(''); }}
-                  aria-label="Cancelar"
-                  className="grid place-items-center w-9 h-9 rounded-xl text-muted hover:bg-danger-soft hover:text-danger transition-colors"
-                >
-                  <Icon name="cancel" size={15} />
-                </button>
+        <div className="sm:col-span-2">
+          <Field label="Categoría" error={errors.category}>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <select value={form.category} onChange={(e) => { update('category', e.target.value); clearError('category'); }} className={`${inputCls(!!errors.category)} pr-10 appearance-none cursor-pointer`}>
+                  <option value="" disabled>Elegí una categoría</option>
+                  {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
               </div>
-              {newCatErr && <p className="text-xs text-danger">{newCatErr}</p>}
+              <button type="button" onClick={() => setShowCatCreator((s) => !s)} aria-label="Crear nueva categoría" aria-expanded={showCatCreator} className="w-11 h-11 shrink-0 border border-line-strong rounded-xl bg-surface text-muted hover:border-accent hover:bg-accent-soft hover:text-accent-ink transition-colors flex items-center justify-center">
+                <Icon name="add" size={17} />
+              </button>
             </div>
-          )}
-        </Field>
 
-        {/* Subcategoría */}
-        <Field label={<>Subcategoría <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase tracking-wider">Opcional</span></>}>
-          <input
-            type="text"
-            maxLength={40}
-            list="subcategory-options"
-            placeholder="Ej. Living"
-            value={form.subcategory}
-            onChange={(e) => update('subcategory', e.target.value)}
-            className={inputCls(false)}
-          />
-          <datalist id="subcategory-options">
-            {subcategories.map((s) => <option key={s} value={s} />)}
-          </datalist>
-        </Field>
+            {showCatCreator && (
+              <div className="grid gap-1.5 mt-2 p-2.5 border border-dashed border-line-strong rounded-xl bg-surface-2 animate-in slide-in-from-top-2 duration-200">
+                <label className="text-xs font-semibold text-ink-soft">Nueva categoría</label>
+                <div className="flex items-center gap-2">
+                  <input type="text" maxLength={40} value={newCat} placeholder="Ej. Iluminación" onChange={(e) => { setNewCat(e.target.value); setNewCatErr(''); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createCat(); } if (e.key === 'Escape') setShowCatCreator(false); }} className="flex-1 min-h-[38px] px-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent" />
+                  <button type="button" onClick={createCat} className="min-h-[38px] px-3.5 rounded-xl bg-accent text-accent-on text-sm font-semibold hover:bg-accent-ink transition-colors">Crear</button>
+                  <button type="button" onClick={() => { setShowCatCreator(false); setNewCatErr(''); }} aria-label="Cancelar" className="grid place-items-center w-9 h-9 rounded-xl text-muted hover:bg-danger-soft hover:text-danger transition-colors"><Icon name="cancel" size={15} /></button>
+                </div>
+                {newCatErr && <p className="text-xs text-danger">{newCatErr}</p>}
+              </div>
+            )}
+          </Field>
+        </div>
 
-        {/* Precio */}
-        <Field label="Precio total (Contado)" error={errors.price}>
+        <div className="sm:col-span-2">
+          <Field label={<>Subcategoría <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase tracking-wider">Opcional</span></>}>
+            <input type="text" maxLength={40} list="subcategory-options" placeholder="Ej. Living" value={form.subcategory} onChange={(e) => update('subcategory', e.target.value)} className={inputCls(false)} />
+            <datalist id="subcategory-options">
+              {subcategories.map((s) => <option key={s} value={s} />)}
+            </datalist>
+          </Field>
+        </div>
+
+        {/* Precio y Prioridad en 2 columnas */}
+        <Field label="Precio total" error={errors.price}>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-semibold" aria-hidden="true">$</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              maxLength={20}
-              placeholder="1.200.000"
-              value={form.price}
-              onChange={(e) => { update('price', e.target.value); clearError('price'); }}
-              className={`${inputCls(!!errors.price)} pl-7 tabular-nums`}
-            />
+            <input type="text" inputMode="decimal" maxLength={20} placeholder="1.200.000" value={form.price} onChange={(e) => { update('price', e.target.value); clearError('price'); }} className={`${inputCls(!!errors.price)} pl-7 tabular-nums`} />
           </div>
         </Field>
 
-        {/* Prioridad */}
         <Field label="Prioridad">
           <div className="relative">
-            <select
-              value={form.priority}
-              onChange={(e) => update('priority', e.target.value as any)}
-              className={`${inputCls(false)} pr-10 appearance-none cursor-pointer`}
-            >
+            <select value={form.priority} onChange={(e) => update('priority', e.target.value as any)} className={`${inputCls(false)} pr-10 appearance-none cursor-pointer`}>
               <option value="urgente">Urgente</option>
               <option value="media">Media</option>
               <option value="baja">Baja</option>
@@ -369,181 +299,89 @@ export function ItemForm() {
           </div>
         </Field>
 
-        {/* Mes de compra */}
-        <Field label="Mes de compra planificado">
-          <input
-            type="month"
-            value={form.purchaseMonth}
-            onChange={(e) => update('purchaseMonth', e.target.value)}
-            className={`${inputCls(false)} cursor-pointer`}
-          />
+        {/* Mes y URL en 2 columnas */}
+        <Field label="Mes planificado">
+          <input type="month" value={form.purchaseMonth} onChange={(e) => update('purchaseMonth', e.target.value)} className={`${inputCls(false)} cursor-pointer text-sm`} />
         </Field>
 
-        {/* NUEVO: Notas adicionales */}
-        <Field label={<>Notas <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase tracking-wider">Opcional</span></>}>
-          <textarea
-            rows={2}
-            maxLength={250}
-            placeholder="Ej. Medidas del mueble, color, sucursal donde lo vi..."
-            value={form.notes}
-            onChange={(e) => update('notes', e.target.value)}
-            className={`${inputCls(false)} py-2 resize-none min-h-[60px]`}
-          />
-        </Field>
-
-        {/* URL del Artículo - MOVIDO AQUÍ PARA MAYOR VISIBILIDAD */}
-        <Field label="URL del artículo (enlace)" error={errors.purchaseUrl}>
+        <Field label="URL del artículo" error={errors.purchaseUrl}>
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
-              <Icon name="globe" size={16} />
-            </span>
-            <input
-              type="url"
-              placeholder="https://tienda.com/producto"
-              value={form.purchaseUrl}
-              onChange={(e) => { update('purchaseUrl', e.target.value); clearError('purchaseUrl'); }}
-              className={`${inputCls(!!errors.purchaseUrl)} pl-9`}
-            />
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true"><Icon name="globe" size={14} /></span>
+            <input type="url" placeholder="https://..." value={form.purchaseUrl} onChange={(e) => { update('purchaseUrl', e.target.value); clearError('purchaseUrl'); }} className={`${inputCls(!!errors.purchaseUrl)} pl-8 text-sm`} />
           </div>
         </Field>
 
-        {/* Wishlist Toggle */}
-        <label className={`flex items-start gap-2.5 p-3 border rounded-xl cursor-pointer transition-colors ${form.wishlist ? 'border-accent bg-accent-soft' : 'border-line bg-surface-2 hover:bg-surface-3'}`}>
-          <input
-            type="checkbox"
-            id="item-wishlist"
-            checked={form.wishlist}
-            onChange={(e) => update('wishlist', e.target.checked)}
-            className="sr-only peer"
-          />
-          <span className={`relative w-[38px] h-[22px] mt-0.5 rounded-full shrink-0 transition-colors ${form.wishlist ? 'bg-accent' : 'bg-line-strong'}`}>
-            <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${form.wishlist ? 'translate-x-4' : ''}`} />
-          </span>
-          <span className="grid gap-px min-w-0">
-            <span className="text-sm font-semibold text-ink">Wishlist / Futuro</span>
-            <span className="text-xs text-muted leading-tight mt-0.5">No suma al presupuesto hasta que lo compres.</span>
-          </span>
-        </label>
-
-        {/* Financiación */}
-        <Section icon="finance" title="Financiación (Cuotas)" defaultOpen={false}>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Cuotas">
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={72}
-                placeholder="Ej. 6"
-                value={form.installments}
-                onChange={(e) => { update('installments', e.target.value); clearError('installments'); }}
-                className={inputCls(!!errors.installments)}
-              />
-            </Field>
-            <div className="col-span-2">
-              <Field label="Valor de cada cuota">
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-semibold" aria-hidden="true">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="50.000"
-                    value={form.installmentAmount}
-                    onChange={(e) => { update('installmentAmount', e.target.value); clearError('installments'); }}
-                    className={`${inputCls(!!errors.installments)} pl-7 tabular-nums`}
-                  />
-                </div>
-              </Field>
-            </div>
-          </div>
-          {errors.installments && <p className="text-xs text-danger">{errors.installments}</p>}
-          <p className="text-xs text-muted leading-relaxed">Calculá tu gasto fijo mensual sumando las cuotas de tus compras.</p>
-        </Section>
-
-        {/* Foto */}
-        <Section icon="photo" title="Foto del producto" defaultOpen={false}>
-          <Field label="URL de la imagen" error={errors.imageUrl}>
-            <input
-              type="url"
-              placeholder="https://.../foto.jpg"
-              value={form.imageUrl}
-              onChange={(e) => { update('imageUrl', e.target.value); clearError('imageUrl'); }}
-              className={inputCls(!!errors.imageUrl)}
-            />
+        <div className="sm:col-span-2">
+          <Field label={<>Notas <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase tracking-wider">Opcional</span></>}>
+            <textarea rows={2} maxLength={250} placeholder="Ej. Medidas del mueble, color, sucursal donde lo vi..." value={form.notes} onChange={(e) => update('notes', e.target.value)} className={`${inputCls(false)} py-2 resize-none min-h-[60px]`} />
           </Field>
-          <div className="flex items-center gap-2.5">
-            {form.photoData && (
-              <div className="relative w-16 h-16 shrink-0 overflow-hidden border border-line rounded-xl bg-surface-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={form.photoData} alt="" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => { update('photoData', ''); setPhotoStatus(''); }}
-                  aria-label="Quitar foto"
-                  className="absolute top-0.5 right-0.5 grid place-items-center w-5 h-5 rounded-full bg-black/80 text-white hover:bg-danger transition-colors"
-                >
-                  <Icon name="cancel" size={13} />
-                </button>
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className={`flex items-start gap-2.5 p-3 border rounded-xl cursor-pointer transition-colors ${form.wishlist ? 'border-accent bg-accent-soft' : 'border-line bg-surface-2 hover:bg-surface-3'}`}>
+            <input type="checkbox" id="item-wishlist" checked={form.wishlist} onChange={(e) => update('wishlist', e.target.checked)} className="sr-only peer" />
+            <span className={`relative w-[38px] h-[22px] mt-0.5 rounded-full shrink-0 transition-colors ${form.wishlist ? 'bg-accent' : 'bg-line-strong'}`}>
+              <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${form.wishlist ? 'translate-x-4' : ''}`} />
+            </span>
+            <span className="grid gap-px min-w-0">
+              <span className="text-sm font-semibold text-ink">Wishlist / Futuro</span>
+              <span className="text-xs text-muted leading-tight mt-0.5">No suma al presupuesto hasta que lo compres.</span>
+            </span>
+          </label>
+        </div>
+
+        {/* Secciones colapsables abarcan las 2 columnas */}
+        <div className="sm:col-span-2">
+          <Section icon="finance" title="Financiación (Cuotas)" defaultOpen={false}>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Cuotas"><input type="number" inputMode="numeric" min={1} max={72} placeholder="Ej. 6" value={form.installments} onChange={(e) => { update('installments', e.target.value); clearError('installments'); }} className={inputCls(!!errors.installments)} /></Field>
+              <div className="col-span-2">
+                <Field label="Valor de cada cuota"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-semibold" aria-hidden="true">$</span><input type="text" inputMode="decimal" placeholder="50.000" value={form.installmentAmount} onChange={(e) => { update('installmentAmount', e.target.value); clearError('installments'); }} className={`${inputCls(!!errors.installments)} pl-7 tabular-nums`} /></div></Field>
               </div>
-            )}
-            <label className="inline-flex items-center justify-center flex-1 min-h-[44px] px-3 border border-dashed border-line-strong rounded-xl bg-surface-2 text-ink-soft text-xs font-semibold cursor-pointer hover:border-accent hover:text-accent-ink transition-colors">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="sr-only"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhoto(f); }}
-              />
-              {form.photoData ? 'Cambiar foto' : 'Tomar o subir foto'}
-            </label>
-          </div>
-          {photoStatus && <p className="text-xs text-accent-ink font-semibold mt-1">{photoStatus}</p>}
-        </Section>
+            </div>
+            {errors.installments && <p className="text-xs text-danger">{errors.installments}</p>}
+          </Section>
+        </div>
 
-        {/* Tienda / Medidas */}
-        <Section icon="store" title="Tienda Física / Medidas" defaultOpen={false}>
-          <Field label="Comercio físico">
-            <input
-              type="text"
-              placeholder="Ej. Bazar Central"
-              value={form.storeName}
-              onChange={(e) => update('storeName', e.target.value)}
-              className={inputCls(false)}
-            />
-          </Field>
-          <Field label="Ubicación / Dirección">
-            <input
-              type="text"
-              placeholder="Ej. Av. Rivadavia 1234"
-              value={form.storeLocation}
-              onChange={(e) => update('storeLocation', e.target.value)}
-              className={inputCls(false)}
-            />
-          </Field>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Alto (cm)">
-              <input type="text" inputMode="numeric" value={form.height} onChange={(e) => { update('height', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} />
-            </Field>
-            <Field label="Ancho (cm)">
-              <input type="text" inputMode="numeric" value={form.width} onChange={(e) => { update('width', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} />
-            </Field>
-            <Field label="Prof. (cm)">
-              <input type="text" inputMode="numeric" value={form.depth} onChange={(e) => { update('depth', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} />
-            </Field>
-          </div>
-          {errors.dimensions && <p className="text-xs text-danger">{errors.dimensions}</p>}
-        </Section>
+        <div className="sm:col-span-2">
+          <Section icon="photo" title="Foto del producto" defaultOpen={false}>
+            <Field label="URL de la imagen" error={errors.imageUrl}><input type="url" placeholder="https://.../foto.jpg" value={form.imageUrl} onChange={(e) => { update('imageUrl', e.target.value); clearError('imageUrl'); }} className={inputCls(!!errors.imageUrl)} /></Field>
+            <div className="flex items-center gap-2.5">
+              {form.photoData && (
+                <div className="relative w-16 h-16 shrink-0 overflow-hidden border border-line rounded-xl bg-surface-2">
+                  <img src={form.photoData} alt="" className="w-full h-full object-cover" />
+                  <button type="button" onClick={() => { update('photoData', ''); setPhotoStatus(''); }} className="absolute top-0.5 right-0.5 grid place-items-center w-5 h-5 rounded-full bg-black/80 text-white hover:bg-danger"><Icon name="cancel" size={13} /></button>
+                </div>
+              )}
+              <label className="inline-flex items-center justify-center flex-1 min-h-[44px] px-3 border border-dashed border-line-strong rounded-xl bg-surface-2 text-ink-soft text-xs font-semibold cursor-pointer hover:border-accent hover:text-accent-ink transition-colors">
+                <input ref={fileRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhoto(f); }} />
+                {form.photoData ? 'Cambiar foto' : 'Tomar o subir foto'}
+              </label>
+            </div>
+            {photoStatus && <p className="text-xs text-accent-ink font-semibold mt-1">{photoStatus}</p>}
+          </Section>
+        </div>
 
-        {/* Botón Submit */}
-        <button
-          type="submit"
-          disabled={photoBusy}
-          className="inline-flex items-center justify-center gap-2 min-h-[44px] mt-2 px-4 rounded-xl bg-accent text-accent-on font-semibold hover:bg-accent-ink transition-colors disabled:opacity-60 shadow-sm"
-        >
-          <Icon name={editingItem ? 'check' : 'add'} size={17} />
-          {editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a la wishlist' : 'Agregar a la lista')}
-        </button>
+        <div className="sm:col-span-2">
+          <Section icon="store" title="Tienda Física / Medidas" defaultOpen={false}>
+            <Field label="Comercio físico"><input type="text" placeholder="Ej. Bazar Central" value={form.storeName} onChange={(e) => update('storeName', e.target.value)} className={inputCls(false)} /></Field>
+            <Field label="Ubicación / Dirección"><input type="text" placeholder="Ej. Av. Rivadavia 1234" value={form.storeLocation} onChange={(e) => update('storeLocation', e.target.value)} className={inputCls(false)} /></Field>
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Alto (cm)"><input type="text" inputMode="numeric" value={form.height} onChange={(e) => { update('height', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
+              <Field label="Ancho (cm)"><input type="text" inputMode="numeric" value={form.width} onChange={(e) => { update('width', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
+              <Field label="Prof. (cm)"><input type="text" inputMode="numeric" value={form.depth} onChange={(e) => { update('depth', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
+            </div>
+            {errors.dimensions && <p className="text-xs text-danger">{errors.dimensions}</p>}
+          </Section>
+        </div>
+
+        {/* Botón Sticky para que siempre esté visible al scrollear el formulario */}
+        <div className="sm:col-span-2 sticky bottom-0 pt-3 pb-1 mt-2 bg-surface/95 backdrop-blur-sm z-10 border-t border-line/50">
+          <button type="submit" disabled={photoBusy} className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl bg-accent text-accent-on font-semibold hover:bg-accent-ink transition-colors disabled:opacity-60 shadow-sm">
+            <Icon name={editingItem ? 'check' : 'add'} size={17} />
+            {editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a la wishlist' : 'Agregar a la lista')}
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -554,7 +392,7 @@ export function ItemForm() {
 function Field({ label, error, children }: { label: React.ReactNode; error?: string; children: React.ReactNode }) {
   return (
     <div className="grid gap-1.5 min-w-0">
-      <label className="text-sm font-semibold text-ink-soft">{label}</label>
+      <label className="text-sm font-semibold text-ink-soft truncate">{label}</label>
       {children}
       {error && <p className="text-xs text-danger">{error}</p>}
     </div>
