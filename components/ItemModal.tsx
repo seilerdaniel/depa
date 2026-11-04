@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useUI } from '@/state/AppProvider';
 import { money, formatDimensions, formatInstallments, getItemImage, formatMonth } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import { Icon } from './Icon';
@@ -9,7 +9,7 @@ import { Icon } from './Icon';
 export function ItemModal() {
   // 1. Los hooks SIEMPRE van primero
   const [isExpanded, setIsExpanded] = useState(false);
-  const { selectedItem, setSelectedItem } = useApp();
+  const { selectedItem, setSelectedItem } = useUI();
 
   // 2. Después de los hooks, hacemos el retorno temprano
   if (!selectedItem) return null;

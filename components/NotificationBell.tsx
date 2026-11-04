@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useData } from '@/state/AppProvider';
 import { Icon } from './Icon';
 import { formatMonth } from '@/lib/utils';
 
 export function NotificationBell() {
-  const { items } = useApp();
+  const { items } = useData();
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [hasPending, setHasPending] = useState(false);
 

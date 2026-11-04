@@ -172,9 +172,6 @@ export interface ToastValue {
   announce: (msg: string) => void;
 }
 
-/** Unión de los cuatro: sólo la usa el shim `useApp()`. */
-export type AppContextValue = DataValue & PrefsValue & UIValue & ToastValue;
-
 // ==========================================
 // CONTEXTOS
 // ==========================================
@@ -209,18 +206,6 @@ export const useToast = (): ToastValue => {
   if (!ctx) throw new Error('useToast must be used within AppProvider');
   return ctx;
 };
-
-/**
- * @deprecated Shim de compatibilidad: suscribe al componente a los CUATRO contextos,
- * así que pierde todo el aislamiento de re-renders. Migrá a useData/usePrefs/useUI/useToast.
- */
-export function useApp(): AppContextValue {
-  const data = useData();
-  const prefs = usePrefs();
-  const ui = useUI();
-  const toast = useToast();
-  return { ...data, ...prefs, ...ui, ...toast };
-}
 
 // ==========================================
 // COMPONENTE PROVIDER
@@ -370,12 +355,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // --- 3. SERVICE WORKER (PWA) ---
   useEffect(() => {
-    // Solo registramos el SW en producción para no ralentizar el dev
-    if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
+    if (!('serviceWorker' in navigator)) return;
+
+    // En producción registramos el SW normalmente.
+    if (process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('Service Worker falló:', err);
       });
+      return;
     }
+
+    // En desarrollo un SW viejo sigue sirviendo HTML y chunks cacheados:
+    // el navegador muestra código desactualizado y localhost se siente lento.
+    // Lo desregistramos y borramos sólo nuestras cachés (prefijo "depa").
+    void (async () => {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(
+            keys.filter((key) => key.startsWith('depa')).map((key) => caches.delete(key))
+          );
+        }
+      } catch (err) {
+        console.warn('No se pudo limpiar el Service Worker de desarrollo:', err);
+      }
+    })();
   }, []);
 
   // --- 4. FUNCIONES DE UI Y TOAST ---

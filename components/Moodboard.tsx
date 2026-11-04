@@ -1,10 +1,11 @@
 'use client';
 
-import { useApp } from '@/state/AppProvider';
+import { useData, useUI } from '@/state/AppProvider';
 import { getItemImage } from '@/lib/utils';
 
 export function Moodboard() {
-  const { items, setView } = useApp();
+  const { items } = useData();
+  const { setView } = useUI();
   const withImage = items.filter((i) => Boolean(getItemImage(i)));
 
   return (

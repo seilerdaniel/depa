@@ -1,6 +1,6 @@
 'use client';
 
-import { useApp } from '@/state/AppProvider';
+import { useData, useUI } from '@/state/AppProvider';
 import { money, formatMonth } from '@/lib/utils';
 import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
@@ -11,7 +11,8 @@ interface Props {
 }
 
 export function TableView({ items, wishlistMode }: Props) {
-  const { removeItem, toggleBought, setWishlist, setEditingItem, setView } = useApp();
+  const { removeItem, toggleBought, setWishlist } = useData();
+  const { setEditingItem, setView } = useUI();
 
   const handleEdit = (item: Item) => {
     setEditingItem(item);

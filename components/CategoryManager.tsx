@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useData, useUI } from '@/state/AppProvider';
 import { Icon } from './Icon';
 
 export function CategoryManager() {
-  const { categories, isCategoryManagerOpen, setCategoryManagerOpen, updateCategory, deleteCategory, items } = useApp();
+  const { categories, updateCategory, deleteCategory, items } = useData();
+  const { isCategoryManagerOpen, setCategoryManagerOpen } = useUI();
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 

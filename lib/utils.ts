@@ -177,52 +177,17 @@ export function formatInstallments(inst?: Installments | null): string {
 // ==========================================
 // PROCESAMIENTO DE IMÁGENES (OPTIMIZACIÓN)
 // ==========================================
-const readFileAsDataUrl = (file: File): Promise<string> =>
-  new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = () => res(String(reader.result || ''));
-    reader.onerror = () => rej(new Error('No se pudo leer el archivo.'));
-    reader.readAsDataURL(file);
-  });
-
-const loadImageElement = (src: string): Promise<HTMLImageElement> =>
-  new Promise((res, rej) => {
-    const img = new Image();
-    img.decoding = 'async';
-    img.onload = () => res(img);
-    img.onerror = () => rej(new Error('El archivo no parece ser una imagen compatible.'));
-    img.src = src;
-  });
-
-function renderJpeg(image: HTMLImageElement, maxSide: number, quality: number): string {
-  const w = image.naturalWidth || image.width;
-  const h = image.naturalHeight || image.height;
-  if (!w || !h) throw new Error('No se pudieron leer las dimensiones de la imagen.');
-
-  const scale = Math.min(1, maxSide / Math.max(w, h));
-  const tw = Math.max(1, Math.round(w * scale));
-  const th = Math.max(1, Math.round(h * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = tw;
-  canvas.height = th;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('No se pudo procesar la imagen.');
-
-  // Fondo blanco por si la imagen original tiene transparencia
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, tw, th);
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(image, 0, 0, tw, th);
-
-  return canvas.toDataURL('image/jpeg', quality);
-}
+/**
+ * Piso de resolución: por debajo de esto la foto deja de ser útil
+ * y conviene rechazarla en lugar de guardar una mancha de píxeles.
+ */
+const PHOTO_MIN_SIDE = 480;
 
 /**
  * Toma un archivo de imagen, lo redimensiona y comprime para que quepa en localStorage.
+ *
+ * Decodifica directo del File con `createImageBitmap` (sin pasar por un DataURL
+ * intermedio, que duplicaba memoria) y reutiliza un único canvas entre intentos.
  */
 export async function optimizePhoto(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) {
@@ -232,22 +197,57 @@ export async function optimizePhoto(file: File): Promise<string> {
     throw new Error('La imagen supera los 20 MB. Prueba con una más liviana.');
   }
 
-  const original = await readFileAsDataUrl(file);
-  const img = await loadImageElement(original);
-
-  let maxSide = MAX_PHOTO_SIDE;
-  let last = '';
-
-  // Intentamos comprimir bajando iterativamente la resolución y calidad
-  while (maxSide >= 480) {
-    for (const q of PHOTO_QUALITIES) {
-      last = renderJpeg(img, maxSide, q);
-      if (last.length <= MAX_PHOTO_DATA_LENGTH) return last;
-    }
-    maxSide = Math.round(maxSide * 0.75);
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error('El archivo no parece ser una imagen compatible.');
   }
 
-  if (last && last.length <= MAX_PHOTO_DATA_LENGTH * 1.3) return last;
+  const naturalWidth = bitmap.width;
+  const naturalHeight = bitmap.height;
+
+  // Un canvas para todos los intentos: crear uno por vuelta era basura pura.
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx || !naturalWidth || !naturalHeight) {
+    bitmap.close();
+    throw new Error('No se pudieron leer las dimensiones de la imagen.');
+  }
+
+  try {
+    let maxSide = MAX_PHOTO_SIDE;
+
+    // Bajamos resolución y calidad de forma acotada: 900 → 675 → 506 → 480.
+    while (maxSide >= PHOTO_MIN_SIDE) {
+      const scale = Math.min(1, maxSide / Math.max(naturalWidth, naturalHeight));
+      const targetWidth = Math.max(1, Math.round(naturalWidth * scale));
+      const targetHeight = Math.max(1, Math.round(naturalHeight * scale));
+
+      // Asignar width/height reinicia el contexto; lo hacemos sólo si cambió.
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+
+      // Fondo blanco por si el original trae transparencia.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, targetWidth, targetHeight);
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+
+      for (const quality of PHOTO_QUALITIES) {
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (dataUrl.length <= MAX_PHOTO_DATA_LENGTH) return dataUrl;
+      }
+
+      maxSide = Math.round(maxSide * 0.75);
+    }
+  } finally {
+    // Libera la memoria decodificada aunque haya error o corte temprano.
+    bitmap.close();
+  }
 
   throw new Error('La foto es demasiado pesada incluso optimizada. Prueba con otra.');
 }

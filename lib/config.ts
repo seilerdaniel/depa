@@ -43,6 +43,6 @@ export const DEFAULT_PREFS: Prefs = {
 };
 
 export const MAX_PHOTO_SIDE = 900;
-export const MAX_PHOTO_DATA_LENGTH = 450_000;
+export const MAX_PHOTO_DATA_LENGTH = 150_000;
 export const PHOTO_QUALITIES = [0.72, 0.6] as const;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;

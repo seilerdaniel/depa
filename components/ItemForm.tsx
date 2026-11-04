@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useData, useUI } from '@/state/AppProvider';
 import { normalizeLabel, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText } from '@/lib/utils';
 import { PRIORITY, CATEGORY_MAX_LENGTH, SUBCATEGORY_MAX_LENGTH } from '@/lib/config';
 import { Icon } from './Icon';
@@ -23,7 +23,8 @@ const EMPTY: FormState = {
 };
 
 export function ItemForm() {
-  const { items, categories, addItem, updateItem, addCategory, editingItem, setEditingItem } = useApp();
+  const { items, categories, addItem, updateItem, addCategory } = useData();
+  const { editingItem, setEditingItem } = useUI();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [activeTab, setActiveTab] = useState<'basico' | 'financiero' | 'detalles'>('basico');
