@@ -1,16 +1,22 @@
 'use client';
 
 import { useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { AppProvider, useApp } from '@/state/AppProvider';
 import { Header } from './Header';
 import { ViewTabs } from './ViewTabs';
 import { ItemForm } from './ItemForm';
 import { ListView } from './ListView';
 import { Moodboard } from './Moodboard';
-import { Dashboard } from './Dashboard';
 import { Toast } from './Toast';
 import { ItemModal } from './ItemModal';
 import { CategoryManager } from './CategoryManager';
+
+// 1. El import dinámico va AFUERA del componente para que se evalúe UNA sola vez
+const Dashboard = dynamic(() => import('./Dashboard').then((mod) => mod.Dashboard), {
+  loading: () => <p className="text-muted text-sm p-4 animate-pulse text-center">Cargando gráficos...</p>,
+  ssr: false,
+});
 
 function Shell() {
   const { view, ready, setEditingItem } = useApp();
@@ -36,7 +42,6 @@ function Shell() {
           <ViewTabs />
         </div>
 
-        {/* Agregamos min-w-0 a los hijos del grid para evitar desbordes */}
         <div className="grid gap-6 pt-2 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
           {view === 'list' && (
             <>
@@ -63,6 +68,7 @@ function Shell() {
 
           {view === 'dashboard' && (
             <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+              {/* 2. Aquí usamos el componente dinámico */}
               <Dashboard />
             </div>
           )}

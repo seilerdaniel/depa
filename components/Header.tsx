@@ -1,14 +1,30 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '@/state/AppProvider';
-import { money, pluralize } from '@/lib/utils';
+import { money, parsePrice, pluralize } from '@/lib/utils';
 import { Icon } from './Icon';
 import { PWAInstall } from './PWAInstall';
 import { NotificationBell } from './NotificationBell';
 
+const budgetFormatter = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 });
+const formatBudget = (value: number) => budgetFormatter.format(value);
+
 export function Header() {
-  const { items, prefs, setPrefs, setView, theme, setTheme } = useApp();
+  const { items, prefs, setPrefs, setView, theme, setTheme, exportData, importData } = useApp();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const budget = prefs.budget;
+
+  // Borrador local: el usuario tipea libremente y sólo persistimos en blur/Enter.
+  const [budgetDraft, setBudgetDraft] = useState<string>(
+    () => (budget === null ? '' : formatBudget(budget)),
+  );
+
+  // Si el presupuesto cambia por fuera (import, otra pestaña), re-sincronizamos el borrador.
+  useEffect(() => {
+    setBudgetDraft(budget === null ? '' : formatBudget(budget));
+  }, [budget]);
 
   const { pendingTotal, pendingCount, boughtTotal, boughtCount, grand, monthly, wishCount, wishTotal } = useMemo(() => {
     let pendingTotal = 0, boughtTotal = 0, monthly = 0, wishTotal = 0;
@@ -22,33 +38,50 @@ export function Header() {
     return { pendingTotal, pendingCount, boughtTotal, boughtCount, grand: pendingTotal + boughtTotal, monthly, wishCount, wishTotal };
   }, [items]);
 
-  const budget = prefs.budget;
-  const over = budget !== null && grand > budget;
-  const percent = budget === null ? 0 : (budget === 0 ? (grand > 0 ? 100 : 0) : Math.round((grand / budget) * 100));
-  const warning = !over && percent >= 80;
-  const diff = budget !== null ? budget - grand : 0;
-
-  const onBudgetInput = (value: string) => {
-    const raw = value.trim();
-    if (!raw) { setPrefs({ budget: null }); return; }
-    const parsed = Number(raw.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.'));
-    if (Number.isFinite(parsed) && parsed >= 0) setPrefs({ budget: Math.round(parsed * 100) / 100 });
-  };
-
-  const onBudgetBlur = (value: string) => {
-    const raw = value.trim();
-    if (!raw) return;
-    const parsed = Number(raw.replace(/[^\d.,]/g, '').replace(/\./g, '').replace(',', '.'));
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      const el = document.getElementById('budget-input') as HTMLInputElement | null;
-      if (el) el.value = new Intl.NumberFormat('es-AR').format(parsed);
-    }
-  };
+  const diff = budget === null ? 0 : budget - pendingTotal;
+  const over = budget !== null && diff < 0;
+  const warning = budget !== null && !over && diff <= budget * 0.2;
+  const percent = budget === null
+    ? 0
+    : budget > 0
+      ? Math.min((pendingTotal / budget) * 100, 100)
+      : pendingTotal > 0 ? 100 : 0;
 
   const toggleTheme = () => {
     if (theme === 'light') setTheme('dark');
     else if (theme === 'dark') setTheme('system');
     else setTheme('light');
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      importData(file);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  /**
+   * Vuelca el borrador al contexto. Vacío => sin límite (null).
+   * Si el texto es inválido, se descarta y se restaura el último valor válido.
+   */
+  const commitBudget = (raw: string) => {
+    const trimmed = raw.trim();
+
+    if (!trimmed) {
+      setPrefs({ budget: null });
+      setBudgetDraft('');
+      return;
+    }
+
+    const parsed = parsePrice(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setBudgetDraft(budget === null ? '' : formatBudget(budget));
+      return;
+    }
+
+    setPrefs({ budget: parsed });
+    setBudgetDraft(formatBudget(parsed));
   };
 
   return (
@@ -68,11 +101,38 @@ export function Header() {
           <div className="flex items-center gap-2 sm:gap-3">
             <PWAInstall />
             <NotificationBell />
+
+            {/* BOTÓN DE EXPORTAR (Descargar JSON) */}
+            <button
+              onClick={exportData}
+              className="p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors"
+              title="Descargar copia de seguridad"
+            >
+              <Icon name="download" size={18} />
+            </button>
+
+            {/* BOTÓN DE IMPORTAR (Subir JSON) */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors"
+              title="Restaurar copia de seguridad"
+            >
+              <Icon name="upload" size={18} />
+            </button>
+            <input
+              type="file"
+              accept=".json"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
             <button onClick={toggleTheme} className="p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors" title={`Tema: ${theme}`}>
               {theme === 'light' && <Icon name="sun" size={18} />}
               {theme === 'dark' && <Icon name="moon" size={18} />}
               {theme === 'system' && <Icon name="monitor" size={18} />}
             </button>
+
             <p className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-line rounded-full bg-surface text-muted text-xs font-semibold">
               <Icon name="local" size={13} /> 100% local
             </p>
@@ -96,9 +156,20 @@ export function Header() {
               <div className="relative flex-1 max-w-[200px]">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm font-semibold" aria-hidden="true">$</span>
                 <input
-                  id="budget-input" type="text" inputMode="decimal" maxLength={20} placeholder="Sin límite"
-                  defaultValue={budget !== null ? new Intl.NumberFormat('es-AR').format(budget) : ''}
-                  onChange={(e) => onBudgetInput(e.target.value)} onBlur={(e) => onBudgetBlur(e.target.value)}
+                  id="budget-input"
+                  type="text"
+                  inputMode="decimal"
+                  maxLength={20}
+                  placeholder="Sin límite"
+                  value={budgetDraft}
+                  onChange={(e) => setBudgetDraft(e.target.value)}
+                  onBlur={(e) => commitBudget(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
                   className="w-full min-h-[36px] pl-7 pr-3 border border-line-strong rounded-lg bg-surface text-ink text-sm tabular-nums focus:outline-none focus:border-accent"
                 />
               </div>

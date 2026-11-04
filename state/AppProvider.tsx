@@ -180,6 +180,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toastTimer = useRef<number | null>(null);
   const announceTimer = useRef<number | null>(null);
 
+  // Marca que la hidratación inicial ya terminó: evita reescribir en disco
+  // los mismos megabytes de Base64 que acabamos de leer.
+  const hydrated = useRef(false);
+
+  // Debounce de prefs: guardamos sólo el último valor pendiente.
+  const prefsTimer = useRef<number | null>(null);
+  const prefsPending = useRef<Prefs | null>(null);
+
   // --- 1. EFECTOS DE CARGA Y PERSISTENCIA ---
   useEffect(() => {
     const items = loadItems();
@@ -193,6 +201,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state.ready) return;
+
+    // Primer render "ready" = datos recién leídos de localStorage.
+    // Escribirlos de vuelta sería un costo puro (y en StrictMode, doble).
+    if (!hydrated.current) {
+      hydrated.current = true;
+      return;
+    }
+
     const res = saveItems(state.items);
     if (!res.success) {
       const err = res.error as any;
@@ -202,8 +218,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.items, state.ready]);
 
   useEffect(() => {
-    if (state.ready) savePrefs(state.prefs);
+    if (!state.ready) return;
+
+    prefsPending.current = state.prefs;
+    if (prefsTimer.current !== null) window.clearTimeout(prefsTimer.current);
+
+    prefsTimer.current = window.setTimeout(() => {
+      prefsTimer.current = null;
+      if (prefsPending.current) {
+        savePrefs(prefsPending.current);
+        prefsPending.current = null;
+      }
+    }, 300);
+
+    return () => {
+      if (prefsTimer.current !== null) {
+        window.clearTimeout(prefsTimer.current);
+        prefsTimer.current = null;
+      }
+    };
   }, [state.prefs, state.ready]);
+
+  // Si el usuario cierra la pestaña dentro de la ventana de 300ms, no perdemos el último cambio.
+  useEffect(() => {
+    const flush = () => {
+      if (prefsPending.current) {
+        savePrefs(prefsPending.current);
+        prefsPending.current = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (state.ready) saveCategories(state.categories);
@@ -256,7 +310,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // --- 3. SERVICE WORKER (PWA) ---
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
+    // Solo registramos el SW en producción para no ralentizar el dev
+    if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('Service Worker falló:', err);
       });
