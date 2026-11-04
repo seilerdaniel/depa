@@ -1,6 +1,6 @@
 export type Priority = 'urgente' | 'media' | 'baja';
 export type StatusFilter = 'todos' | 'pendientes' | 'comprados';
-export type SortMode = 'prioridad' | 'precio-desc' | 'precio-asc' | 'nombre';
+export type SortMode = 'prioridad' | 'precio-desc' | 'precio-asc' | 'nombre' | 'manual';
 export type View = 'list' | 'wishlist' | 'moodboard' | 'dashboard' | 'history';
 export type ViewMode = 'grid' | 'table';
 

@@ -4,6 +4,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useReducer,
   useRef, useState, type ReactNode,
 } from 'react';
+import { arrayMove } from '@dnd-kit/sortable'; // <--- IMPORTANTE: Agregado para el Drag & Drop
 import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
@@ -41,7 +42,8 @@ type Action =
   | { type: 'delete-category'; name: string }
   | { type: 'set-view'; view: View }
   | { type: 'set-editing'; item: Item | null }
-  | { type: 'set-selected'; item: Item | null };
+  | { type: 'set-selected'; item: Item | null }
+  | { type: 'reorder-items'; items: Item[] };
 
 const reducer = (s: AppState, a: Action): AppState => {
   switch (a.type) {
@@ -101,6 +103,8 @@ const reducer = (s: AppState, a: Action): AppState => {
       return { ...s, editingItem: a.item };
     case 'set-selected':
       return { ...s, selectedItem: a.item };
+    case 'reorder-items':
+      return { ...s, items: a.items };
     default:
       return s;
   }
@@ -139,7 +143,8 @@ interface AppContextValue extends AppState {
   setView: (v: View) => void;
   setEditingItem: (item: Item | null) => void;
   setSelectedItem: (item: Item | null) => void;
-  
+  reorderItems: (activeId: string, overId: string) => void; // <--- AGREGADO
+
   isCategoryManagerOpen: boolean;
   setCategoryManagerOpen: (open: boolean) => void;
 
@@ -169,7 +174,7 @@ export const useApp = () => {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [theme, setTheme] = useState<Theme>('system');
+  const [theme, setThemeState] = useState<Theme>('system');
   const [isCategoryManagerOpen, setCategoryManagerOpen] = useState(false);
 
   const toastTimer = useRef<number | null>(null);
@@ -221,17 +226,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // --- 2. EFECTOS DE TEMA (MODO OSCURO) ---
   useEffect(() => {
+    const saved = localStorage.getItem('depa.theme') as Theme | null;
+    if (saved) setThemeState(saved);
+  }, []);
+
+  const setTheme = useCallback((t: Theme) => {
+    setThemeState(t);
+    localStorage.setItem('depa.theme', t);
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
-
-    if (theme === 'system') {
+    if (t === 'system') {
       const sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(sys);
     } else {
-      root.classList.add(theme);
+      root.classList.add(t);
     }
-    localStorage.setItem('depa.theme', theme);
-  }, [theme]);
+  }, []);
 
   useEffect(() => {
     if (theme !== 'system') return;
@@ -352,8 +362,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateCategory = useCallback<AppContextValue['updateCategory']>((oldName, newName) => {
     const trimmed = normalizeLabel(newName, CATEGORY_MAX_LENGTH);
     if (!trimmed || trimmed === oldName) return false;
-    if (state.categories.some(c => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) return false; 
-    
+    if (state.categories.some(c => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) return false;
+
     dispatch({ type: 'update-category', oldName, newName: trimmed });
     showToast('Categoría actualizada');
     return true;
@@ -375,6 +385,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setSelectedItem = useCallback<AppContextValue['setSelectedItem']>((item) => {
     dispatch({ type: 'set-selected', item });
   }, []);
+
+  // --- NUEVO: FUNCIÓN PARA REORDENAR ---
+  const reorderItems = useCallback((activeId: string, overId: string) => {
+    const oldIndex = state.items.findIndex((i) => i.id === activeId);
+    const newIndex = state.items.findIndex((i) => i.id === overId);
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newItems = arrayMove(state.items, oldIndex, newIndex);
+      dispatch({ type: 'reorder-items', items: newItems });
+    }
+  }, [state.items]);
 
   // --- 6. FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR) ---
   const exportData = useCallback(() => {
@@ -428,8 +448,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     ...state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, updateCategory, deleteCategory, 
+    setPrefs, addCategory, updateCategory, deleteCategory,
     setView, setEditingItem, setSelectedItem,
+    reorderItems, // <--- AGREGADO AQUÍ
     isCategoryManagerOpen, setCategoryManagerOpen,
     theme, setTheme,
     exportData, importData,
@@ -437,8 +458,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     state,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, updateCategory, deleteCategory, 
+    setPrefs, addCategory, updateCategory, deleteCategory,
     setView, setEditingItem, setSelectedItem,
+    reorderItems, // <--- AGREGADO A LAS DEPENDENCIAS
     isCategoryManagerOpen,
     theme, setTheme,
     exportData, importData,
