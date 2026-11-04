@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useData, usePrefs } from '@/state/AppProvider';
@@ -86,9 +86,9 @@ export function ListView({ mode }: Props) {
     const byPriority = (a: Item, b: Item) => PRIORITY.get(a.priority)!.rank - PRIORITY.get(b.priority)!.rank || b.createdAt - a.createdAt;
     list.sort(
       currentSort === 'precio-desc' ? (a, b) => b.price - a.price || byPriority(a, b)
-      : currentSort === 'precio-asc' ? (a, b) => a.price - b.price || byPriority(a, b)
-      : currentSort === 'nombre' ? (a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base', numeric: true }) || byPriority(a, b)
-      : byPriority
+        : currentSort === 'precio-asc' ? (a, b) => a.price - b.price || byPriority(a, b)
+          : currentSort === 'nombre' ? (a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base', numeric: true }) || byPriority(a, b)
+            : byPriority
     );
     return list;
   }, [scopeItems, prefs, isActiveList, categoryKey, subcategoryKey, sortKey, needle]);
@@ -134,14 +134,15 @@ export function ListView({ mode }: Props) {
         <div className="flex-1 min-w-[160px] grid gap-1.5">
           <label htmlFor={`search-${mode}`} className="text-xs font-semibold text-ink-soft">Buscar artículo</label>
           <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon name="search" size={16} /></span>
+            {/* Ajustamos el left-3 a left-3.5 para que respire mejor */}
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"><Icon name="search" size={16} /></span>
             <input
-              id={`search-${mode}`}
               type="search"
               placeholder="Ej. Heladera..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full min-h-[44px] pl-9 pr-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/20 transition-colors"
+              /* Ajustamos pl-9 a pl-10 para que el texto no toque la lupa */
+              className="w-full min-h-[44px] pl-10 pr-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/20 transition-colors"
             />
           </div>
         </div>
