@@ -3,7 +3,7 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
-import { useApp } from '@/state/AppProvider';
+import { useData, usePrefs } from '@/state/AppProvider';
 import { sameText } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import type { Item, SortMode } from '@/lib/types';
@@ -21,7 +21,8 @@ const foldText = (value: unknown): string =>
     .replace(/[\u0300-\u036f]/g, '');
 
 export function ListView({ mode }: Props) {
-  const { items, prefs, setPrefs, categories, reorderItems } = useApp();
+  const { items, categories, reorderItems } = useData();
+  const { prefs, setPrefs } = usePrefs();
 
   // Búsqueda local: no persiste, no toca el contexto, no bloquea el tipeo.
   const [search, setSearch] = useState('');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useApp } from '@/state/AppProvider';
+import { useData, useUI } from '@/state/AppProvider';
 import { TAB_ORDER } from '@/lib/config';
 import type { View } from '@/lib/types';
 import { Icon } from './Icon';
@@ -14,7 +14,8 @@ const META: Record<View, { label: string; icon: string }> = {
 };
 
 export function ViewTabs() {
-  const { view, setView, items, setCategoryManagerOpen } = useApp();
+  const { items } = useData();
+  const { view, setView, setCategoryManagerOpen } = useUI();
   
   const counts: Record<View, number> = {
     list: items.filter((i) => !i.wishlist && !i.bought).length,
@@ -40,6 +41,7 @@ export function ViewTabs() {
               type="button"
               role="tab"
               aria-selected={selected}
+              aria-label={META[id].label}
               onClick={() => setView(id)}
               className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
                 selected ? 'bg-accent-soft text-accent-ink' : 'text-muted hover:text-ink'

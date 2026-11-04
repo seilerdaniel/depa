@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useData, usePrefs, useUI } from '@/state/AppProvider';
 import { money, parsePrice, pluralize } from '@/lib/utils';
 import { Icon } from './Icon';
 import { PWAInstall } from './PWAInstall';
@@ -11,7 +11,9 @@ const budgetFormatter = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 
 const formatBudget = (value: number) => budgetFormatter.format(value);
 
 export function Header() {
-  const { items, prefs, setPrefs, setView, theme, setTheme, exportData, importData } = useApp();
+  const { items, exportData, importData } = useData();
+  const { prefs, setPrefs } = usePrefs();
+  const { setView, theme, setTheme } = useUI();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const budget = prefs.budget;

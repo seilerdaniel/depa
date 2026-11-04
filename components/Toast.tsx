@@ -1,9 +1,9 @@
 'use client';
 
-import { useApp } from '@/state/AppProvider';
+import { useToast } from '@/state/AppProvider';
 
 export function Toast() {
-  const { toast, hideToast } = useApp();
+  const { toast, hideToast } = useToast();
   if (!toast) return null;
   return (
     <div role="status" aria-live="polite"

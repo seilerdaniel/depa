@@ -1,6 +1,7 @@
 'use client';
 
-import { useApp } from '@/state/AppProvider';
+import { memo } from 'react';
+import { useData, useUI } from '@/state/AppProvider';
 import { money, formatDimensions, formatInstallments, getItemImage, formatMonth } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import type { Item } from '@/lib/types';
@@ -21,16 +22,21 @@ const PRIO_TONES: Record<Item['priority'], { border: string; badge: string }> = 
   baja: { border: 'border-t-low', badge: 'bg-low-soft text-low border border-low/20' },
 };
 
-export function ItemCard({ item, wishlistMode }: { item: Item; wishlistMode: boolean }) {
-  // Agregamos setSelectedItem para abrir el modal
-  const { removeItem, toggleBought, setWishlist, setView, setEditingItem, setSelectedItem } = useApp();
-  
+interface ItemCardProps {
+  item: Item;
+  wishlistMode: boolean;
+}
+
+function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
+  const { removeItem, toggleBought, setWishlist } = useData();
+  const { setView, setEditingItem, setSelectedItem } = useUI();
+
   const tone = PRIO_TONES[item.priority];
   const src = getItemImage(item);
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);
   const catIcon = CATEGORY_ICONS[item.category] || 'list';
-  
+
   const placeText = !item.purchaseUrl && (item.storeName || item.storeLocation) 
     ? [item.storeName, item.storeLocation].filter(Boolean).join(' · ') 
     : '';
@@ -166,3 +172,5 @@ export function ItemCard({ item, wishlistMode }: { item: Item; wishlistMode: boo
     </li>
   );
 }
+
+export const ItemCard = memo(ItemCardBase);

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { AppProvider, useApp } from '@/state/AppProvider';
+import { AppProvider, useData, useUI } from '@/state/AppProvider';
 import { Header } from './Header';
 import { ViewTabs } from './ViewTabs';
 import { ItemForm } from './ItemForm';
@@ -19,7 +19,8 @@ const Dashboard = dynamic(() => import('./Dashboard').then((mod) => mod.Dashboar
 });
 
 function Shell() {
-  const { view, ready, setEditingItem } = useApp();
+  const { ready } = useData();
+  const { view, setEditingItem } = useUI();
 
   useEffect(() => {
     setEditingItem(null);

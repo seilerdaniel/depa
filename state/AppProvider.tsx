@@ -4,7 +4,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useReducer,
   useRef, useState, type ReactNode,
 } from 'react';
-import { arrayMove } from '@dnd-kit/sortable'; // <--- IMPORTANTE: Agregado para el Drag & Drop
+import { arrayMove } from '@dnd-kit/sortable';
 import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
@@ -121,52 +121,106 @@ const initialState: AppState = {
 };
 
 // ==========================================
-// INTERFAZ DEL CONTEXTO
+// CONTRATOS DE CADA CONTEXTO
 // ==========================================
-interface ToastState {
+export interface ToastState {
   id: number;
   message: string;
   actionLabel?: string;
   onAction?: () => void;
 }
 
-interface AppContextValue extends AppState {
+export interface DataValue {
+  items: Item[];
+  categories: string[];
+  ready: boolean;
   addItem: (draft: Omit<Item, 'id' | 'createdAt' | 'bought'>) => boolean;
   updateItem: (item: Item) => void;
   removeItem: (id: string) => void;
   toggleBought: (id: string, bought: boolean) => void;
   setWishlist: (id: string, wishlist: boolean) => boolean;
-  setPrefs: (patch: Partial<Prefs>) => void;
+  reorderItems: (activeId: string, overId: string) => void;
   addCategory: (name: string) => boolean;
   updateCategory: (oldName: string, newName: string) => boolean;
   deleteCategory: (name: string) => void;
-  setView: (v: View) => void;
-  setEditingItem: (item: Item | null) => void;
-  setSelectedItem: (item: Item | null) => void;
-  reorderItems: (activeId: string, overId: string) => void; // <--- AGREGADO
-
-  isCategoryManagerOpen: boolean;
-  setCategoryManagerOpen: (open: boolean) => void;
-
-  theme: Theme;
-  setTheme: (t: Theme) => void;
-
   exportData: () => void;
   importData: (file: File) => void;
+}
 
+export interface PrefsValue {
+  prefs: Prefs;
+  setPrefs: (patch: Partial<Prefs>) => void;
+}
+
+export interface UIValue {
+  view: View;
+  setView: (v: View) => void;
+  editingItem: Item | null;
+  setEditingItem: (item: Item | null) => void;
+  selectedItem: Item | null;
+  setSelectedItem: (item: Item | null) => void;
+  isCategoryManagerOpen: boolean;
+  setCategoryManagerOpen: (open: boolean) => void;
+  theme: Theme;
+  setTheme: (t: Theme) => void;
+}
+
+export interface ToastValue {
   toast: ToastState | null;
   showToast: (message: string, opts?: { actionLabel?: string; onAction?: () => void }) => void;
   hideToast: () => void;
   announce: (msg: string) => void;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+/** Unión de los cuatro: sólo la usa el shim `useApp()`. */
+export type AppContextValue = DataValue & PrefsValue & UIValue & ToastValue;
 
-export const useApp = () => {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
+// ==========================================
+// CONTEXTOS
+// ==========================================
+const DataContext = createContext<DataValue | null>(null);
+const PrefsContext = createContext<PrefsValue | null>(null);
+const UIContext = createContext<UIValue | null>(null);
+const ToastContext = createContext<ToastValue | null>(null);
+
+// ==========================================
+// HOOKS
+// ==========================================
+export const useData = (): DataValue => {
+  const ctx = useContext(DataContext);
+  if (!ctx) throw new Error('useData must be used within AppProvider');
   return ctx;
 };
+
+export const usePrefs = (): PrefsValue => {
+  const ctx = useContext(PrefsContext);
+  if (!ctx) throw new Error('usePrefs must be used within AppProvider');
+  return ctx;
+};
+
+export const useUI = (): UIValue => {
+  const ctx = useContext(UIContext);
+  if (!ctx) throw new Error('useUI must be used within AppProvider');
+  return ctx;
+};
+
+export const useToast = (): ToastValue => {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error('useToast must be used within AppProvider');
+  return ctx;
+};
+
+/**
+ * @deprecated Shim de compatibilidad: suscribe al componente a los CUATRO contextos,
+ * así que pierde todo el aislamiento de re-renders. Migrá a useData/usePrefs/useUI/useToast.
+ */
+export function useApp(): AppContextValue {
+  const data = useData();
+  const prefs = usePrefs();
+  const ui = useUI();
+  const toast = useToast();
+  return { ...data, ...prefs, ...ui, ...toast };
+}
 
 // ==========================================
 // COMPONENTE PROVIDER
@@ -187,6 +241,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Debounce de prefs: guardamos sólo el último valor pendiente.
   const prefsTimer = useRef<number | null>(null);
   const prefsPending = useRef<Prefs | null>(null);
+
+  // Espejo del estado para acciones que deben ser estables (exportData).
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // --- 1. EFECTOS DE CARGA Y PERSISTENCIA ---
   useEffect(() => {
@@ -334,14 +394,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setToast(null);
   }, []);
 
-  const showToast = useCallback<AppContextValue['showToast']>((message, opts) => {
+  const showToast = useCallback<ToastValue['showToast']>((message, opts) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), message, actionLabel: opts?.actionLabel, onAction: opts?.onAction });
     toastTimer.current = window.setTimeout(hideToast, opts?.onAction ? 7000 : 3400);
   }, [hideToast]);
 
   // --- 5. ACCIONES DE DATOS ---
-  const addItem = useCallback<AppContextValue['addItem']>((draft) => {
+  const addItem = useCallback<DataValue['addItem']>((draft) => {
     const item: Item = { ...draft, id: createId(), createdAt: Date.now(), bought: false };
     dispatch({ type: 'add', item });
 
@@ -358,13 +418,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [announce, showToast]);
 
-  const updateItem = useCallback<AppContextValue['updateItem']>((item) => {
+  const updateItem = useCallback<DataValue['updateItem']>((item) => {
     dispatch({ type: 'update', item });
     announce(`${item.name} actualizado`);
     showToast('Artículo actualizado correctamente');
   }, [announce, showToast]);
 
-  const removeItem = useCallback<AppContextValue['removeItem']>((id) => {
+  const removeItem = useCallback<DataValue['removeItem']>((id) => {
     const index = state.items.findIndex((i) => i.id === id);
     if (index === -1) return;
     const removed = state.items[index];
@@ -379,13 +439,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [state.items, showToast, announce]);
 
-  const toggleBought = useCallback<AppContextValue['toggleBought']>((id, bought) => {
+  const toggleBought = useCallback<DataValue['toggleBought']>((id, bought) => {
     dispatch({ type: 'toggle-bought', id, bought });
     const item = state.items.find((i) => i.id === id);
     if (item) announce(`${item.name} marcado como ${bought ? 'comprado' : 'pendiente'}`);
   }, [state.items, announce]);
 
-  const setWishlist = useCallback<AppContextValue['setWishlist']>((id, wishlist) => {
+  const setWishlist = useCallback<DataValue['setWishlist']>((id, wishlist) => {
     const item = state.items.find((i) => i.id === id);
     if (!item || item.wishlist === wishlist) return false;
 
@@ -404,17 +464,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [state.items, announce, showToast]);
 
-  const setPrefs = useCallback<AppContextValue['setPrefs']>((patch) => {
+  const setPrefs = useCallback<PrefsValue['setPrefs']>((patch) => {
     dispatch({ type: 'set-prefs', patch });
   }, []);
 
-  const addCategory = useCallback<AppContextValue['addCategory']>((name) => {
+  const addCategory = useCallback<DataValue['addCategory']>((name) => {
     if (state.categories.some((c) => c.toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) return false;
     dispatch({ type: 'add-category', name });
     return true;
   }, [state.categories]);
 
-  const updateCategory = useCallback<AppContextValue['updateCategory']>((oldName, newName) => {
+  const updateCategory = useCallback<DataValue['updateCategory']>((oldName, newName) => {
     const trimmed = normalizeLabel(newName, CATEGORY_MAX_LENGTH);
     if (!trimmed || trimmed === oldName) return false;
     if (state.categories.some(c => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) return false;
@@ -424,25 +484,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [state.categories, showToast]);
 
-  const deleteCategory = useCallback<AppContextValue['deleteCategory']>((name) => {
+  const deleteCategory = useCallback<DataValue['deleteCategory']>((name) => {
     dispatch({ type: 'delete-category', name });
     showToast(`Categoría "${name}" eliminada. Sus artículos se movieron a "Otros".`);
   }, [showToast]);
 
-  const setView = useCallback<AppContextValue['setView']>((view) => {
+  const setView = useCallback<UIValue['setView']>((view) => {
     dispatch({ type: 'set-view', view });
   }, []);
 
-  const setEditingItem = useCallback<AppContextValue['setEditingItem']>((item) => {
+  const setEditingItem = useCallback<UIValue['setEditingItem']>((item) => {
     dispatch({ type: 'set-editing', item });
   }, []);
 
-  const setSelectedItem = useCallback<AppContextValue['setSelectedItem']>((item) => {
+  const setSelectedItem = useCallback<UIValue['setSelectedItem']>((item) => {
     dispatch({ type: 'set-selected', item });
   }, []);
 
-  // --- NUEVO: FUNCIÓN PARA REORDENAR ---
-  const reorderItems = useCallback((activeId: string, overId: string) => {
+  const reorderItems = useCallback<DataValue['reorderItems']>((activeId, overId) => {
     const oldIndex = state.items.findIndex((i) => i.id === activeId);
     const newIndex = state.items.findIndex((i) => i.id === overId);
     if (oldIndex !== -1 && newIndex !== -1) {
@@ -452,11 +511,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.items]);
 
   // --- 6. FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR) ---
-  const exportData = useCallback(() => {
+  // Lee el estado desde la ref para NO depender de `prefs`:
+  // si dependiera de prefs, DataContext cambiaría al cambiar un filtro.
+  const exportData = useCallback<DataValue['exportData']>(() => {
+    const snapshot = stateRef.current;
     const data = {
-      items: state.items,
-      categories: state.categories,
-      prefs: state.prefs,
+      items: snapshot.items,
+      categories: snapshot.categories,
+      prefs: snapshot.prefs,
       version: 1
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -467,9 +529,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     a.click();
     URL.revokeObjectURL(url);
     showToast('Copia de seguridad descargada');
-  }, [state.items, state.categories, state.prefs, showToast]);
+  }, [showToast]);
 
-  const importData = useCallback((file: File) => {
+  const importData = useCallback<DataValue['importData']>((file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -499,33 +561,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reader.readAsText(file);
   }, [showToast]);
 
-  // --- 7. VALOR DEL CONTEXTO Y RETORNO ---
-  const value = useMemo<AppContextValue>(() => ({
-    ...state,
+  // --- 7. VALORES DE CADA CONTEXTO ---
+  // Cada useMemo depende SÓLO de su slice. Ésta es la razón de ser del refactor.
+  const toastValue = useMemo<ToastValue>(() => ({
+    toast,
+    showToast,
+    hideToast,
+    announce,
+  }), [toast, showToast, hideToast, announce]);
+
+  const prefsValue = useMemo<PrefsValue>(() => ({
+    prefs: state.prefs,
+    setPrefs,
+  }), [state.prefs, setPrefs]);
+
+  const dataValue = useMemo<DataValue>(() => ({
+    items: state.items,
+    categories: state.categories,
+    ready: state.ready,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, updateCategory, deleteCategory,
-    setView, setEditingItem, setSelectedItem,
-    reorderItems, // <--- AGREGADO AQUÍ
-    isCategoryManagerOpen, setCategoryManagerOpen,
-    theme, setTheme,
+    reorderItems,
+    addCategory, updateCategory, deleteCategory,
     exportData, importData,
-    toast, showToast, hideToast, announce,
   }), [
-    state,
+    state.items, state.categories, state.ready,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
-    setPrefs, addCategory, updateCategory, deleteCategory,
+    reorderItems,
+    addCategory, updateCategory, deleteCategory,
+    exportData, importData,
+  ]);
+
+  const uiValue = useMemo<UIValue>(() => ({
+    view: state.view,
+    setView,
+    editingItem: state.editingItem,
+    setEditingItem,
+    selectedItem: state.selectedItem,
+    setSelectedItem,
+    isCategoryManagerOpen,
+    setCategoryManagerOpen,
+    theme,
+    setTheme,
+  }), [
+    state.view, state.editingItem, state.selectedItem,
     setView, setEditingItem, setSelectedItem,
-    reorderItems, // <--- AGREGADO A LAS DEPENDENCIAS
     isCategoryManagerOpen,
     theme, setTheme,
-    exportData, importData,
-    toast, showToast, hideToast, announce
   ]);
 
   return (
-    <AppContext.Provider value={value}>
-      {children}
-      <p id="sr-status" className="sr-only" role="status" aria-live="polite" />
-    </AppContext.Provider>
+    <ToastContext.Provider value={toastValue}>
+      <PrefsContext.Provider value={prefsValue}>
+        <DataContext.Provider value={dataValue}>
+          <UIContext.Provider value={uiValue}>
+            {children}
+            <p id="sr-status" className="sr-only" role="status" aria-live="polite" />
+          </UIContext.Provider>
+        </DataContext.Provider>
+      </PrefsContext.Provider>
+    </ToastContext.Provider>
   );
 }

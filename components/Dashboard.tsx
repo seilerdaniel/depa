@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useApp } from '@/state/AppProvider';
+import { useData } from '@/state/AppProvider';
 import { money, formatMonth } from '@/lib/utils';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
@@ -52,7 +52,7 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
 }
 
 export function Dashboard() {
-  const { items } = useApp();
+  const { items } = useData();
 
   // 1. KPIs
   const kpis = useMemo(() => {
