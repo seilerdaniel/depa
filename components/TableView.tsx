@@ -15,65 +15,90 @@ type ColumnKey = 'article' | 'category' | 'month' | 'price' | 'status' | 'action
 
 const COLUMN_KEYS: readonly ColumnKey[] = ['article', 'category', 'month', 'price', 'status', 'actions'];
 
+/** Porcentajes. Suman 100 para que la tabla llene el contenedor. */
 const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
-  article: 280,
-  category: 180,
-  month: 120,
-  price: 120,
-  status: 110,
-  actions: 110,
+  article: 30,
+  category: 18,
+  month: 13,
+  price: 15,
+  status: 12,
+  actions: 12,
 };
+
+/** Piso por columna, también en porcentaje. */
+const MIN_WIDTHS: Record<ColumnKey, number> = {
+  article: 14,
+  category: 9,
+  month: 8,
+  price: 10,
+  status: 9,
+  actions: 10,
+};
+
+const STORAGE_KEY = 'depa.table-col-widths.v2';
+const LEGACY_STORAGE_KEY = 'depa.table-col-widths.v1';
+
+interface HeaderCellProps {
+  label: string;
+  colKey: ColumnKey;
+  width: number;
+  isDragging: boolean;
+  align?: 'left' | 'center' | 'right';
+  isLast?: boolean;
+  onResizeStart: (event: React.MouseEvent<HTMLDivElement>, key: ColumnKey) => void;
+  onNudge: (key: ColumnKey, delta: number) => void;
+}
 
 /**
- * Piso por columna. Un mínimo global de 80px parece razonable hasta que
- * "Precio" recorta "$ 1.200.000" o "Acciones" corta el último botón.
+ * Normaliza cualquier set de anchos a porcentajes que sumen 100.
+ * Sirve tanto para los porcentajes nuevos (v2) como para los píxeles
+ * del formato viejo (v1): en ambos casos importan las proporciones.
  */
-const MIN_WIDTHS: Record<ColumnKey, number> = {
-  article: 160,
-  category: 100,
-  month: 100,
-  price: 110,
-  status: 100,
-  actions: 110,
-};
-
-const MAX_WIDTH = 800;
-const STORAGE_KEY = 'depa.table-col-widths.v1';
-const KEYBOARD_STEP = 8;
-const KEYBOARD_STEP_LARGE = 32;
-
-interface DragState {
-  key: ColumnKey;
-  startX: number;
-  startWidth: number;
-}
-
-interface ResizeControls {
-  active: ColumnKey | null;
-  start: (event: React.PointerEvent<HTMLDivElement>, key: ColumnKey) => void;
-  move: (event: React.PointerEvent<HTMLDivElement>) => void;
-  end: (event: React.PointerEvent<HTMLDivElement>) => void;
-  nudge: (key: ColumnKey, delta: number) => void;
-}
-
-const clampWidth = (key: ColumnKey, value: number) =>
-  Math.min(MAX_WIDTH, Math.max(MIN_WIDTHS[key], Math.round(value)));
-
-function sanitizeWidths(raw: unknown): Record<ColumnKey, number> | null {
+function normalizeWidths(raw: unknown): Record<ColumnKey, number> | null {
   if (!raw || typeof raw !== 'object') return null;
+
   const source = raw as Record<string, unknown>;
-  const next = { ...DEFAULT_WIDTHS };
-  let touched = false;
+  const values = {} as Record<ColumnKey, number>;
+  let total = 0;
 
   for (const key of COLUMN_KEYS) {
     const value = Number(source[key]);
-    if (Number.isFinite(value)) {
-      next[key] = clampWidth(key, value);
-      touched = true;
-    }
+    if (!Number.isFinite(value) || value <= 0) return null;
+    values[key] = value;
+    total += value;
   }
 
-  return touched ? next : null;
+  if (total <= 0) return null;
+
+  const normalized = {} as Record<ColumnKey, number>;
+  for (const key of COLUMN_KEYS) normalized[key] = (values[key] / total) * 100;
+  return normalized;
+}
+
+/**
+ * Mueve el límite entre `key` y su vecina derecha: una crece, la otra
+ * se encoge lo mismo. Así la suma se mantiene en 100 y no hay saltos.
+ */
+function applyDelta(
+  base: Record<ColumnKey, number>,
+  key: ColumnKey,
+  delta: number
+): Record<ColumnKey, number> {
+  const index = COLUMN_KEYS.indexOf(key);
+  const neighbor = COLUMN_KEYS[index + 1];
+  if (!neighbor) return base;
+
+  const total = base[key] + base[neighbor];
+  const min = MIN_WIDTHS[key];
+  const minNeighbor = MIN_WIDTHS[neighbor];
+
+  // Si no hay espacio para respetar ambos mínimos, no movemos nada.
+  if (total <= min + minNeighbor) return base;
+
+  const next = Math.min(total - minNeighbor, Math.max(min, base[key] + delta));
+  if (next === base[key]) return base;
+
+  return { ...base, [key]: next, [neighbor]: total - next };
 }
 
 export function TableView({ items, wishlistMode }: Props) {
@@ -83,17 +108,19 @@ export function TableView({ items, wishlistMode }: Props) {
   // Arrancamos con los defaults para no romper la hidratación.
   const [colWidths, setColWidths] = useState<Record<ColumnKey, number>>(DEFAULT_WIDTHS);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [resizingKey, setResizingKey] = useState<ColumnKey | null>(null);
+  const [draggingKey, setDraggingKey] = useState<ColumnKey | null>(null);
 
-  // Guardamos el punto de partida del arrastre fuera del estado:
-  // el estado cambia en cada píxel y no queremos usarlo como referencia.
-  const dragRef = useRef<DragState | null>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const stopDragRef = useRef<(() => void) | null>(null);
+
+  // Si cambian de vista en medio de un arrastre, no dejamos listeners vivos.
+  useEffect(() => () => stopDragRef.current?.(), []);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = sanitizeWidths(JSON.parse(saved));
+      const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (raw) {
+        const parsed = normalizeWidths(JSON.parse(raw));
         if (parsed) setColWidths(parsed);
       }
     } catch (e) {
@@ -103,14 +130,17 @@ export function TableView({ items, wishlistMode }: Props) {
     }
   }, []);
 
-  // Debounce: durante un arrastre hay decenas de cambios por segundo y
-  // localStorage es sincrónico. Escribimos una sola vez al soltar.
+  // Debounce: localStorage es sincrónico y durante el arrastre hay
+  // decenas de cambios por segundo. Escribimos una vez que se detiene.
   useEffect(() => {
     if (!isLoaded) return;
 
     const timer = window.setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(colWidths));
+        const payload = Object.fromEntries(
+          COLUMN_KEYS.map((key) => [key, Number(colWidths[key].toFixed(3))])
+        );
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       } catch (e) {
         console.warn('No se pudieron guardar los anchos de columna', e);
       }
@@ -119,56 +149,55 @@ export function TableView({ items, wishlistMode }: Props) {
     return () => window.clearTimeout(timer);
   }, [colWidths, isLoaded]);
 
-  const startResize = (event: React.PointerEvent<HTMLDivElement>, key: ColumnKey) => {
+  const handleResizeStart = (event: React.MouseEvent<HTMLDivElement>, key: ColumnKey) => {
     if (event.button !== 0) return;
+
+    const table = tableRef.current;
+    if (!table) return;
+
+    const tableWidth = table.getBoundingClientRect().width;
+    if (tableWidth <= 0) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    dragRef.current = { key, startX: event.clientX, startWidth: colWidths[key] };
-    setResizingKey(key);
+    // Si había un arrastre anterior sin cerrar, lo cancelamos.
+    stopDragRef.current?.();
 
-    // La captura hace que pointermove/pointerup sigan llegando a la manija
-    // aunque el cursor salga del elemento o de la ventana.
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
+    const startX = event.clientX;
+    const startWidths = colWidths;
 
-  const moveResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
+    const handleMove = (moveEvent: MouseEvent) => {
+      // El delta en píxeles se traduce a puntos porcentuales de la tabla.
+      const delta = ((moveEvent.clientX - startX) / tableWidth) * 100;
+      setColWidths(applyDelta(startWidths, key, delta));
+    };
 
-    const next = clampWidth(drag.key, drag.startWidth + (event.clientX - drag.startX));
-    setColWidths((prev) => (prev[drag.key] === next ? prev : { ...prev, [drag.key]: next }));
-  };
+    const stop = () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('blur', stop);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      stopDragRef.current = null;
+      setDraggingKey(null);
+    };
 
-  const endResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
+    stopDragRef.current = stop;
+    setDraggingKey(key);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
 
-    dragRef.current = null;
-    setResizingKey(null);
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
   };
 
   const nudgeWidth = (key: ColumnKey, delta: number) => {
-    setColWidths((prev) => ({ ...prev, [key]: clampWidth(key, prev[key] + delta) }));
+    setColWidths((prev) => applyDelta(prev, key, delta));
   };
 
   const resetWidths = () => setColWidths({ ...DEFAULT_WIDTHS });
-
-  const resize: ResizeControls = {
-    active: resizingKey,
-    start: startResize,
-    move: moveResize,
-    end: endResize,
-    nudge: nudgeWidth,
-  };
-
-  // `table-fixed` obedece los <col> sólo si el ancho de la tabla es la suma
-  // exacta de las columnas. Con width:100% el navegador reparte el sobrante.
-  const tableWidth = COLUMN_KEYS.reduce((sum, key) => sum + colWidths[key], 0);
 
   const handleEdit = (item: Item) => {
     setEditingItem(item);
@@ -182,7 +211,7 @@ export function TableView({ items, wishlistMode }: Props) {
   };
 
   return (
-    <div className={`w-full flex flex-col gap-2 animate-in fade-in duration-300 ${resizingKey ? 'cursor-col-resize select-none' : ''}`}>
+    <div className={`w-full flex flex-col gap-2 animate-in fade-in duration-300 ${draggingKey ? 'cursor-col-resize' : ''}`}>
 
       {/* Barra de herramientas de la tabla */}
       <div className="flex justify-end">
@@ -195,26 +224,26 @@ export function TableView({ items, wishlistMode }: Props) {
         </button>
       </div>
 
-      <div className="w-fit max-w-full overflow-x-auto border border-line rounded-2xl bg-surface shadow-sm">
-        <table className="table-fixed text-sm text-left" style={{ width: tableWidth }}>
+      <div className="w-full overflow-x-auto border border-line rounded-2xl bg-surface shadow-sm">
+        <table ref={tableRef} className="w-full min-w-[720px] table-fixed text-sm text-left">
 
           <colgroup>
-            <col style={{ width: colWidths.article }} />
-            <col style={{ width: colWidths.category }} />
-            <col style={{ width: colWidths.month }} />
-            <col style={{ width: colWidths.price }} />
-            <col style={{ width: colWidths.status }} />
-            <col style={{ width: colWidths.actions }} />
+            <col style={{ width: `${colWidths.article}%` }} />
+            <col style={{ width: `${colWidths.category}%` }} />
+            <col style={{ width: `${colWidths.month}%` }} />
+            <col style={{ width: `${colWidths.price}%` }} />
+            <col style={{ width: `${colWidths.status}%` }} />
+            <col style={{ width: `${colWidths.actions}%` }} />
           </colgroup>
 
           <thead className="bg-surface-2 text-muted text-[0.7rem] uppercase font-bold tracking-wider border-b border-line select-none">
             <tr>
-              <HeaderCell label="Artículo" colKey="article" width={colWidths.article} resize={resize} />
-              <HeaderCell label="Categoría" colKey="category" width={colWidths.category} resize={resize} />
-              <HeaderCell label="Mes" colKey="month" width={colWidths.month} resize={resize} align="center" />
-              <HeaderCell label="Precio" colKey="price" width={colWidths.price} resize={resize} align="right" />
-              <HeaderCell label="Estado" colKey="status" width={colWidths.status} resize={resize} align="center" />
-              <HeaderCell label="Acciones" colKey="actions" width={colWidths.actions} resize={resize} align="right" isLast />
+              <HeaderCell label="Artículo" colKey="article" width={colWidths.article} isDragging={draggingKey === 'article'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} />
+              <HeaderCell label="Categoría" colKey="category" width={colWidths.category} isDragging={draggingKey === 'category'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} />
+              <HeaderCell label="Mes" colKey="month" width={colWidths.month} isDragging={draggingKey === 'month'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="center" />
+              <HeaderCell label="Precio" colKey="price" width={colWidths.price} isDragging={draggingKey === 'price'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="right" />
+              <HeaderCell label="Estado" colKey="status" width={colWidths.status} isDragging={draggingKey === 'status'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="center" />
+              <HeaderCell label="Acciones" colKey="actions" width={colWidths.actions} isDragging={draggingKey === 'actions'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="right" isLast />
             </tr>
           </thead>
 
@@ -239,7 +268,7 @@ export function TableView({ items, wishlistMode }: Props) {
                   )}
                 </td>
 
-                <td className="px-3 py-3 text-center">
+                <td className="px-3 py-3 text-center overflow-hidden">
                   {item.purchaseMonth ? (
                     <span className="inline-flex items-center px-2 py-1 rounded-md bg-accent-soft text-accent-ink font-semibold text-[0.7rem] capitalize whitespace-nowrap">
                       {formatMonth(item.purchaseMonth)}
@@ -249,7 +278,7 @@ export function TableView({ items, wishlistMode }: Props) {
                   )}
                 </td>
 
-                <td className="px-3 py-3 text-right whitespace-nowrap">
+                <td className="px-3 py-3 text-right whitespace-nowrap overflow-hidden">
                   <span className={`font-bold tabular-nums ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>
                     {money(item.price)}
                   </span>
@@ -306,23 +335,18 @@ function HeaderCell({
   label,
   colKey,
   width,
-  resize,
+  isDragging,
   align = 'left',
   isLast = false,
-}: {
-  label: string;
-  colKey: ColumnKey;
-  width: number;
-  resize: ResizeControls;
-  align?: 'left' | 'center' | 'right';
-  isLast?: boolean;
-}) {
+  onResizeStart,
+  onNudge,
+}: HeaderCellProps) {
   const alignment = align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left';
-  const isActive = resize.active === colKey;
 
   return (
     <th className={`relative px-3 py-3.5 font-bold ${alignment} ${isLast ? 'rounded-tr-2xl' : ''} ${colKey === 'article' ? 'rounded-tl-2xl' : ''}`}>
-      <span className="truncate block">{label}</span>
+      {/* pointer-events-none: el label nunca puede robarle el clic a la manija */}
+      <span className="truncate block pointer-events-none">{label}</span>
 
       {/* Manija de arrastre */}
       {!isLast && (
@@ -330,25 +354,21 @@ function HeaderCell({
           role="separator"
           aria-orientation="vertical"
           aria-label={`Ajustar ancho de la columna ${label}`}
-          aria-valuenow={width}
-          aria-valuemin={MIN_WIDTHS[colKey]}
-          aria-valuemax={MAX_WIDTH}
+          aria-valuenow={Math.round(width)}
+          aria-valuemin={Math.round(MIN_WIDTHS[colKey])}
+          aria-valuemax={100}
           tabIndex={0}
           title="Arrastrá para ajustar el ancho. Usá ← → para ajustar de a poco."
-          onPointerDown={(e) => resize.start(e, colKey)}
-          onPointerMove={resize.move}
-          onPointerUp={resize.end}
-          onPointerCancel={resize.end}
-          onLostPointerCapture={resize.end}
-          onKeyDown={(e) => {
-            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-            e.preventDefault();
-            const step = e.shiftKey ? KEYBOARD_STEP_LARGE : KEYBOARD_STEP;
-            resize.nudge(colKey, e.key === 'ArrowRight' ? step : -step);
+          onMouseDown={(event) => onResizeStart(event, colKey)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            const step = event.shiftKey ? 4 : 1;
+            onNudge(colKey, event.key === 'ArrowRight' ? step : -step);
           }}
-          className={`absolute top-0 right-0 z-10 flex h-full w-3 cursor-col-resize touch-none items-center justify-center outline-none transition-colors hover:bg-accent/20 focus-visible:bg-accent/30 ${isActive ? 'bg-accent/30' : ''}`}
+          className={`absolute inset-y-0 right-0 z-20 flex w-3 cursor-col-resize select-none items-center justify-center outline-none transition-colors hover:bg-accent/20 focus-visible:bg-accent/30 ${isDragging ? 'bg-accent/30' : ''}`}
         >
-          <span className={`h-1/2 w-px transition-colors ${isActive ? 'bg-accent' : 'bg-line-strong'}`} />
+          <span className={`h-1/2 w-px transition-colors ${isDragging ? 'bg-accent' : 'bg-line-strong'}`} />
         </div>
       )}
     </th>

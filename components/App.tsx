@@ -38,7 +38,12 @@ function Shell() {
     <div className="min-h-[100dvh] flex flex-col">
       <Header />
 
-      <main className="flex-1 mx-auto w-[min(1180px,100%-32px)] py-4 pb-10 outline-none focus:outline-none" id="contenido" tabIndex={-1}>
+      <main
+        className="flex-1 mx-auto w-[min(1180px,100%-32px)] py-4 pb-10 outline-none focus:outline-none"
+        id="contenido"
+        tabIndex={-1}
+        style={{ outline: 'none' }}
+      >
         <div className="mb-4">
           <ViewTabs />
         </div>
