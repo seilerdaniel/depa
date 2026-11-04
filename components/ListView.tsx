@@ -1,19 +1,19 @@
 'use client';
 
-import React, { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
+import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useData, usePrefs } from '@/state/AppProvider';
 import { sameText } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import type { Item, SortMode } from '@/lib/types';
 import { ItemCard } from './ItemCard';
 import { TableView } from './TableView';
+import { ListItem } from './ListItem';
 import { Icon } from './Icon';
 
 interface Props { mode: 'list' | 'wishlist' | 'history'; }
 
-/** Minúsculas + sin acentos, para que "Heladera" encuentre "heladéra". */
 const foldText = (value: unknown): string =>
   String(value ?? '')
     .toLocaleLowerCase('es')
@@ -24,17 +24,14 @@ export function ListView({ mode }: Props) {
   const { items, categories, reorderItems } = useData();
   const { prefs, setPrefs } = usePrefs();
 
-  // Búsqueda local: no persiste, no toca el contexto, no bloquea el tipeo.
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const needle = foldText(deferredSearch.trim());
 
-  // DEFINICIÓN DE VARIABLES CLAVE
   const isWish = mode === 'wishlist';
   const isHistory = mode === 'history';
   const isActiveList = mode === 'list';
 
-  // Sensores para Drag and Drop
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -49,6 +46,8 @@ export function ListView({ mode }: Props) {
   const categoryKey = isWish ? 'wishlistCategory' : 'category';
   const subcategoryKey = isWish ? 'wishlistSubcategory' : 'subcategory';
   const sortKey = isWish ? 'wishlistSort' : 'sort';
+
+  const isManual = prefs[sortKey] === 'manual';
 
   const subcategories = useMemo(() => {
     const names = new Map<string, string>();
@@ -79,9 +78,7 @@ export function ListView({ mode }: Props) {
       return true;
     });
 
-    if (currentSort === 'manual') {
-      return list;
-    }
+    if (currentSort === 'manual') return list;
 
     const byPriority = (a: Item, b: Item) => PRIORITY.get(a.priority)!.rank - PRIORITY.get(b.priority)!.rank || b.createdAt - a.createdAt;
     list.sort(
@@ -114,16 +111,25 @@ export function ListView({ mode }: Props) {
 
   return (
     <section id={`panel-${mode}`} role="tabpanel" aria-labelledby={`tab-${mode}`} className="pt-2 min-w-0 w-full">
-
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-xl font-bold tracking-tight text-ink">
           {isWish ? 'Wishlist / Futuro' : isHistory ? 'Historial de Compras' : 'Lista de compras'}
         </h2>
         <div className="flex items-center gap-3 ml-auto">
+
+          {/* BOTONES DE VISTA (Grid, List, Table) */}
           <div className="flex items-center gap-1 p-1 bg-surface-2 border border-line rounded-lg shadow-sm">
-            <button onClick={() => setPrefs({ viewMode: 'grid' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'grid' ? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong/20' : 'text-muted hover:text-ink'}`} aria-label="Vista de tarjetas" aria-pressed={prefs.viewMode === 'grid'}><Icon name="grid" size={16} /></button>
-            <button onClick={() => setPrefs({ viewMode: 'table' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'table' ? 'bg-surface text-ink shadow-sm ring-1 ring-line-strong/20' : 'text-muted hover:text-ink'}`} aria-label="Vista de tabla" aria-pressed={prefs.viewMode === 'table'}><Icon name="table" size={16} /></button>
+            <button onClick={() => setPrefs({ viewMode: 'grid' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'grid' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tarjetas">
+              <Icon name="grid" size={16} />
+            </button>
+            <button onClick={() => setPrefs({ viewMode: 'list' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'list' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de lista">
+              <Icon name="menu" size={16} />
+            </button>
+            <button onClick={() => setPrefs({ viewMode: 'table' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'table' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tabla">
+              <Icon name="table" size={16} />
+            </button>
           </div>
+
           <span className="px-3 py-1 border border-line rounded-full bg-surface text-muted text-sm font-semibold tabular-nums">
             {total === 0 ? '0' : filtered ? `${visible.length} / ${total}` : total}
           </span>
@@ -134,14 +140,13 @@ export function ListView({ mode }: Props) {
         <div className="flex-1 min-w-[160px] grid gap-1.5">
           <label htmlFor={`search-${mode}`} className="text-xs font-semibold text-ink-soft">Buscar artículo</label>
           <div className="relative">
-            {/* Ajustamos el left-3 a left-3.5 para que respire mejor */}
             <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted"><Icon name="search" size={16} /></span>
             <input
+              id={`search-${mode}`}
               type="search"
               placeholder="Ej. Heladera..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              /* Ajustamos pl-9 a pl-10 para que el texto no toque la lupa */
               className="w-full min-h-[44px] pl-10 pr-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/20 transition-colors"
             />
           </div>
@@ -182,10 +187,19 @@ export function ListView({ mode }: Props) {
           <TableView items={visible} wishlistMode={isWish} />
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={visible.map(i => i.id)} strategy={rectSortingStrategy}>
-              <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in duration-300 min-w-0">
-                {visible.map((it) => <ItemCard key={it.id} item={it} wishlistMode={isWish} />)}
-              </ul>
+            <SortableContext
+              items={visible.map(i => i.id)}
+              strategy={prefs.viewMode === 'list' ? verticalListSortingStrategy : rectSortingStrategy}
+            >
+              {prefs.viewMode === 'list' ? (
+                <ul className="flex flex-col gap-2 animate-in fade-in duration-300 min-w-0">
+                  {visible.map((it) => <ListItem key={it.id} item={it} wishlistMode={isWish} isDraggable={isManual} />)}
+                </ul>
+              ) : (
+                <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in duration-300 min-w-0">
+                  {visible.map((it) => <ItemCard key={it.id} item={it} wishlistMode={isWish} />)}
+                </ul>
+              )}
             </SortableContext>
           </DndContext>
         )
