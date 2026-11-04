@@ -15,27 +15,25 @@ type ColumnKey = 'article' | 'category' | 'month' | 'price' | 'status' | 'action
 
 const COLUMN_KEYS: readonly ColumnKey[] = ['article', 'category', 'month', 'price', 'status', 'actions'];
 
-/** Porcentajes. Suman 100 para que la tabla llene el contenedor. */
-const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
-  article: 30,
-  category: 18,
-  month: 13,
-  price: 15,
-  status: 12,
-  actions: 12,
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  article: 'Artículo',
+  category: 'Categoría',
+  month: 'Mes',
+  price: 'Precio',
+  status: 'Estado',
+  actions: 'Acciones',
 };
 
-/** Piso por columna, también en porcentaje. */
+const DEFAULT_WIDTHS: Record<ColumnKey, number> = {
+  article: 30, category: 18, month: 13, price: 15, status: 12, actions: 12,
+};
+
 const MIN_WIDTHS: Record<ColumnKey, number> = {
-  article: 14,
-  category: 9,
-  month: 8,
-  price: 10,
-  status: 9,
-  actions: 10,
+  article: 14, category: 9, month: 8, price: 10, status: 9, actions: 10,
 };
 
 const STORAGE_KEY = 'depa.table-col-widths.v2';
+const VISIBILITY_KEY = 'depa.table-col-visibility.v1';
 const LEGACY_STORAGE_KEY = 'depa.table-col-widths.v1';
 
 interface HeaderCellProps {
@@ -49,14 +47,8 @@ interface HeaderCellProps {
   onNudge: (key: ColumnKey, delta: number) => void;
 }
 
-/**
- * Normaliza cualquier set de anchos a porcentajes que sumen 100.
- * Sirve tanto para los porcentajes nuevos (v2) como para los píxeles
- * del formato viejo (v1): en ambos casos importan las proporciones.
- */
 function normalizeWidths(raw: unknown): Record<ColumnKey, number> | null {
   if (!raw || typeof raw !== 'object') return null;
-
   const source = raw as Record<string, unknown>;
   const values = {} as Record<ColumnKey, number>;
   let total = 0;
@@ -75,15 +67,7 @@ function normalizeWidths(raw: unknown): Record<ColumnKey, number> | null {
   return normalized;
 }
 
-/**
- * Mueve el límite entre `key` y su vecina derecha: una crece, la otra
- * se encoge lo mismo. Así la suma se mantiene en 100 y no hay saltos.
- */
-function applyDelta(
-  base: Record<ColumnKey, number>,
-  key: ColumnKey,
-  delta: number
-): Record<ColumnKey, number> {
+function applyDelta(base: Record<ColumnKey, number>, key: ColumnKey, delta: number): Record<ColumnKey, number> {
   const index = COLUMN_KEYS.indexOf(key);
   const neighbor = COLUMN_KEYS[index + 1];
   if (!neighbor) return base;
@@ -92,9 +76,7 @@ function applyDelta(
   const min = MIN_WIDTHS[key];
   const minNeighbor = MIN_WIDTHS[neighbor];
 
-  // Si no hay espacio para respetar ambos mínimos, no movemos nada.
   if (total <= min + minNeighbor) return base;
-
   const next = Math.min(total - minNeighbor, Math.max(min, base[key] + delta));
   if (next === base[key]) return base;
 
@@ -105,17 +87,33 @@ export function TableView({ items, wishlistMode }: Props) {
   const { removeItem, toggleBought, setWishlist } = useData();
   const { setEditingItem, setView } = useUI();
 
-  // Arrancamos con los defaults para no romper la hidratación.
   const [colWidths, setColWidths] = useState<Record<ColumnKey, number>>(DEFAULT_WIDTHS);
+  const [visibleCols, setVisibleCols] = useState<Record<ColumnKey, boolean>>({
+    article: true, category: true, month: true, price: true, status: true, actions: true,
+  });
+  
   const [isLoaded, setIsLoaded] = useState(false);
   const [draggingKey, setDraggingKey] = useState<ColumnKey | null>(null);
+  const [showColMenu, setShowColMenu] = useState(false); // Estado para el menú
 
   const tableRef = useRef<HTMLTableElement>(null);
   const stopDragRef = useRef<(() => void) | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  // Si cambian de vista en medio de un arrastre, no dejamos listeners vivos.
+  // Cerrar menú al hacer clic afuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowColMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   useEffect(() => () => stopDragRef.current?.(), []);
 
+  // Cargar preferencias
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -123,52 +121,48 @@ export function TableView({ items, wishlistMode }: Props) {
         const parsed = normalizeWidths(JSON.parse(raw));
         if (parsed) setColWidths(parsed);
       }
+      
+      const visRaw = localStorage.getItem(VISIBILITY_KEY);
+      if (visRaw) {
+        const parsedVis = JSON.parse(visRaw);
+        if (parsedVis && typeof parsedVis === 'object') {
+          setVisibleCols({ ...visibleCols, ...parsedVis });
+        }
+      }
     } catch (e) {
-      console.warn('No se pudieron cargar los anchos de columna', e);
+      console.warn('Error al cargar config de tabla', e);
     } finally {
       setIsLoaded(true);
     }
   }, []);
 
-  // Debounce: localStorage es sincrónico y durante el arrastre hay
-  // decenas de cambios por segundo. Escribimos una vez que se detiene.
+  // Guardar preferencias con debounce
   useEffect(() => {
     if (!isLoaded) return;
-
     const timer = window.setTimeout(() => {
       try {
-        const payload = Object.fromEntries(
-          COLUMN_KEYS.map((key) => [key, Number(colWidths[key].toFixed(3))])
-        );
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {
-        console.warn('No se pudieron guardar los anchos de columna', e);
-      }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(colWidths));
+        localStorage.setItem(VISIBILITY_KEY, JSON.stringify(visibleCols));
+      } catch (e) {}
     }, 250);
-
     return () => window.clearTimeout(timer);
-  }, [colWidths, isLoaded]);
+  }, [colWidths, visibleCols, isLoaded]);
 
   const handleResizeStart = (event: React.MouseEvent<HTMLDivElement>, key: ColumnKey) => {
     if (event.button !== 0) return;
-
     const table = tableRef.current;
     if (!table) return;
-
     const tableWidth = table.getBoundingClientRect().width;
     if (tableWidth <= 0) return;
 
     event.preventDefault();
     event.stopPropagation();
-
-    // Si había un arrastre anterior sin cerrar, lo cancelamos.
     stopDragRef.current?.();
 
     const startX = event.clientX;
     const startWidths = colWidths;
 
     const handleMove = (moveEvent: MouseEvent) => {
-      // El delta en píxeles se traduce a puntos porcentuales de la tabla.
       const delta = ((moveEvent.clientX - startX) / tableWidth) * 100;
       setColWidths(applyDelta(startWidths, key, delta));
     };
@@ -197,30 +191,64 @@ export function TableView({ items, wishlistMode }: Props) {
     setColWidths((prev) => applyDelta(prev, key, delta));
   };
 
-  const resetWidths = () => setColWidths({ ...DEFAULT_WIDTHS });
-
-  const handleEdit = (item: Item) => {
-    setEditingItem(item);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  const resetWidths = () => {
+    setColWidths({ ...DEFAULT_WIDTHS });
+    setVisibleCols({ article: true, category: true, month: true, price: true, status: true, actions: true });
   };
 
-  const handleMoveToList = (id: string) => {
-    if (setWishlist(id, false)) {
-      setView('list');
-    }
+  const toggleCol = (key: ColumnKey) => {
+    // Evitar que el usuario oculte todas las columnas
+    const activeCount = Object.values(visibleCols).filter(Boolean).length;
+    if (activeCount === 1 && visibleCols[key]) return;
+    
+    setVisibleCols(prev => ({ ...prev, [key]: !prev[key] }));
   };
+
+  const handleEdit = (item: Item) => { setEditingItem(item); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const handleMoveToList = (id: string) => { if (setWishlist(id, false)) setView('list'); };
+
+  // Calcular el ancho de la tabla solo con las columnas visibles
+  const activeColumns = COLUMN_KEYS.filter(key => visibleCols[key]);
+  const tableWidth = activeColumns.reduce((sum, key) => sum + colWidths[key], 0);
 
   return (
     <div className={`w-full flex flex-col gap-2 animate-in fade-in duration-300 ${draggingKey ? 'cursor-col-resize' : ''}`}>
+      
+      {/* Barra de herramientas */}
+      <div className="flex justify-end gap-2">
+        
+        {/* Botón de Mostrar/Ocultar Columnas */}
+        <div className="relative" ref={menuRef}>
+          <button
+            onClick={() => setShowColMenu(!showColMenu)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-muted hover:text-ink bg-surface border border-line rounded-lg transition-colors"
+          >
+            <Icon name="columns" size={12} /> Columnas
+          </button>
+          
+          {showColMenu && (
+            <div className="absolute right-0 top-full mt-1 w-48 bg-surface border border-line rounded-xl shadow-xl z-50 p-2 animate-in fade-in zoom-in-95">
+              {COLUMN_KEYS.map(key => (
+                <label key={key} className="flex items-center gap-2 px-2 py-1.5 hover:bg-surface-2 rounded-lg cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={visibleCols[key]} 
+                    onChange={() => toggleCol(key)}
+                    className="accent-accent"
+                  />
+                  <span className="text-xs font-semibold text-ink">{COLUMN_LABELS[key]}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
 
-      {/* Barra de herramientas de la tabla */}
-      <div className="flex justify-end">
         <button
           onClick={resetWidths}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-muted hover:text-ink bg-surface border border-line rounded-lg transition-colors"
           title="Restaurar el ancho original de las columnas"
         >
-          <Icon name="settings" size={12} /> Restaurar columnas
+          <Icon name="settings" size={12} /> Restaurar
         </button>
       </div>
 
@@ -228,99 +256,91 @@ export function TableView({ items, wishlistMode }: Props) {
         <table ref={tableRef} className="w-full min-w-[720px] table-fixed text-sm text-left">
 
           <colgroup>
-            <col style={{ width: `${colWidths.article}%` }} />
-            <col style={{ width: `${colWidths.category}%` }} />
-            <col style={{ width: `${colWidths.month}%` }} />
-            <col style={{ width: `${colWidths.price}%` }} />
-            <col style={{ width: `${colWidths.status}%` }} />
-            <col style={{ width: `${colWidths.actions}%` }} />
+            {activeColumns.map(key => (
+              <col key={key} style={{ width: `${colWidths[key]}%` }} />
+            ))}
           </colgroup>
 
           <thead className="bg-surface-2 text-muted text-[0.7rem] uppercase font-bold tracking-wider border-b border-line select-none">
             <tr>
-              <HeaderCell label="Artículo" colKey="article" width={colWidths.article} isDragging={draggingKey === 'article'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} />
-              <HeaderCell label="Categoría" colKey="category" width={colWidths.category} isDragging={draggingKey === 'category'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} />
-              <HeaderCell label="Mes" colKey="month" width={colWidths.month} isDragging={draggingKey === 'month'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="center" />
-              <HeaderCell label="Precio" colKey="price" width={colWidths.price} isDragging={draggingKey === 'price'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="right" />
-              <HeaderCell label="Estado" colKey="status" width={colWidths.status} isDragging={draggingKey === 'status'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="center" />
-              <HeaderCell label="Acciones" colKey="actions" width={colWidths.actions} isDragging={draggingKey === 'actions'} onResizeStart={handleResizeStart} onNudge={nudgeWidth} align="right" isLast />
+              {activeColumns.map((key, index) => (
+                <HeaderCell 
+                  key={key}
+                  label={COLUMN_LABELS[key]} 
+                  colKey={key} 
+                  width={colWidths[key]} 
+                  isDragging={draggingKey === key} 
+                  onResizeStart={handleResizeStart} 
+                  onNudge={nudgeWidth} 
+                  isLast={index === activeColumns.length - 1} 
+                  align={key === 'price' || key === 'actions' ? 'right' : key === 'month' || key === 'status' ? 'center' : 'left'}
+                />
+              ))}
             </tr>
           </thead>
 
           <tbody className="divide-y divide-line">
             {items.map((item) => (
               <tr key={item.id} className="hover:bg-surface-2/60 transition-colors group">
-                <td className="px-3 py-3 overflow-hidden">
-                  <p className={`font-semibold truncate ${item.bought && !wishlistMode ? 'line-through text-muted' : 'text-ink'}`} title={item.name}>
-                    {item.name}
-                  </p>
-                  {item.purchaseUrl && (
-                    <a href={item.purchaseUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-0.5 text-[0.7rem] text-accent hover:underline">
-                      <Icon name="globe" size={10} /> Ir al sitio
-                    </a>
-                  )}
-                </td>
+                
+                {visibleCols.article && (
+                  <td className="px-3 py-3 overflow-hidden">
+                    <p className={`font-semibold truncate ${item.bought && !wishlistMode ? 'line-through text-muted' : 'text-ink'}`} title={item.name}>{item.name}</p>
+                    {item.purchaseUrl && <a href={item.purchaseUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-0.5 text-[0.7rem] text-accent hover:underline"><Icon name="globe" size={10} /> Ir al sitio</a>}
+                  </td>
+                )}
 
-                <td className="px-3 py-3 overflow-hidden">
-                  <span className="text-ink-soft truncate block" title={item.category}>{item.category}</span>
-                  {item.subcategory && (
-                    <span className="block text-[0.65rem] text-muted truncate" title={item.subcategory}>{item.subcategory}</span>
-                  )}
-                </td>
+                {visibleCols.category && (
+                  <td className="px-3 py-3 overflow-hidden">
+                    <span className="text-ink-soft truncate block" title={item.category}>{item.category}</span>
+                    {item.subcategory && <span className="block text-[0.65rem] text-muted truncate" title={item.subcategory}>{item.subcategory}</span>}
+                  </td>
+                )}
 
-                <td className="px-3 py-3 text-center overflow-hidden">
-                  {item.purchaseMonth ? (
-                    <span className="inline-flex items-center px-2 py-1 rounded-md bg-accent-soft text-accent-ink font-semibold text-[0.7rem] capitalize whitespace-nowrap">
-                      {formatMonth(item.purchaseMonth)}
-                    </span>
-                  ) : (
-                    <span className="text-muted/50">—</span>
-                  )}
-                </td>
+                {visibleCols.month && (
+                  <td className="px-3 py-3 text-center overflow-hidden">
+                    {item.purchaseMonth ? (
+                      <span className="inline-flex items-center px-2 py-1 rounded-md bg-accent-soft text-accent-ink font-semibold text-[0.7rem] capitalize whitespace-nowrap">{formatMonth(item.purchaseMonth)}</span>
+                    ) : <span className="text-muted/50">—</span>}
+                  </td>
+                )}
 
-                <td className="px-3 py-3 text-right whitespace-nowrap overflow-hidden">
-                  <span className={`font-bold tabular-nums ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>
-                    {money(item.price)}
-                  </span>
-                  {item.installments && (
-                    <span className="block text-[0.65rem] text-medium font-semibold mt-0.5">
-                      {item.installments.count} cuotas
-                    </span>
-                  )}
-                </td>
+                {visibleCols.price && (
+                  <td className="px-3 py-3 text-right whitespace-nowrap overflow-hidden">
+                    <span className={`font-bold tabular-nums ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>{money(item.price)}</span>
+                    {item.installments && <span className="block text-[0.65rem] text-medium font-semibold mt-0.5">{item.installments.count} cuotas</span>}
+                  </td>
+                )}
 
-                <td className="px-3 py-3 text-center">
-                  {!wishlistMode ? (
-                    <label className="inline-flex items-center justify-center cursor-pointer">
-                      <input type="checkbox" checked={item.bought} onChange={(e) => toggleBought(item.id, e.target.checked)} className="sr-only peer" />
-                      <span className={`px-2 py-1 rounded-md text-[0.65rem] font-bold border transition-colors whitespace-nowrap ${item.bought ? 'bg-accent text-accent-on border-accent' : 'bg-surface border-line-strong text-muted hover:border-accent'}`}>
-                        {item.bought ? 'Comprado' : 'Pendiente'}
-                      </span>
-                    </label>
-                  ) : (
-                    <span className="px-2 py-1 rounded-md bg-surface-2 border border-line-strong text-muted text-[0.65rem] font-bold">Idea</span>
-                  )}
-                </td>
-
-                <td className="px-3 py-3 text-right">
-                  <div className="flex items-center justify-end gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => handleEdit(item)} className="p-1.5 text-muted hover:text-ink hover:bg-surface-3 rounded-lg" title="Editar">
-                      <Icon name="edit" size={15} />
-                    </button>
+                {visibleCols.status && (
+                  <td className="px-3 py-3 text-center">
                     {!wishlistMode ? (
-                      <button onClick={() => setWishlist(item.id, true)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Wishlist">
-                        <Icon name="wishlist" size={15} />
-                      </button>
+                      <label className="inline-flex items-center justify-center cursor-pointer">
+                        <input type="checkbox" checked={item.bought} onChange={(e) => toggleBought(item.id, e.target.checked)} className="sr-only peer" />
+                        <span className={`px-2 py-1 rounded-md text-[0.65rem] font-bold border transition-colors whitespace-nowrap ${item.bought ? 'bg-accent text-accent-on border-accent' : 'bg-surface border-line-strong text-muted hover:border-accent'}`}>
+                          {item.bought ? 'Comprado' : 'Pendiente'}
+                        </span>
+                      </label>
                     ) : (
-                      <button onClick={() => handleMoveToList(item.id)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Mover">
-                        <Icon name="list" size={15} />
-                      </button>
+                      <span className="px-2 py-1 rounded-md bg-surface-2 border border-line-strong text-muted text-[0.65rem] font-bold">Idea</span>
                     )}
-                    <button onClick={() => removeItem(item.id)} className="p-1.5 text-muted hover:text-danger hover:bg-danger-soft rounded-lg" title="Eliminar">
-                      <Icon name="delete" size={15} />
-                    </button>
-                  </div>
-                </td>
+                  </td>
+                )}
+
+                {visibleCols.actions && (
+                  <td className="px-3 py-3 text-right">
+                    <div className="flex items-center justify-end gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handleEdit(item)} className="p-1.5 text-muted hover:text-ink hover:bg-surface-3 rounded-lg" title="Editar"><Icon name="edit" size={15} /></button>
+                      {!wishlistMode ? (
+                        <button onClick={() => setWishlist(item.id, true)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Wishlist"><Icon name="wishlist" size={15} /></button>
+                      ) : (
+                        <button onClick={() => handleMoveToList(item.id)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Mover"><Icon name="list" size={15} /></button>
+                      )}
+                      <button onClick={() => removeItem(item.id)} className="p-1.5 text-muted hover:text-danger hover:bg-danger-soft rounded-lg" title="Eliminar"><Icon name="delete" size={15} /></button>
+                    </div>
+                  </td>
+                )}
+
               </tr>
             ))}
           </tbody>
@@ -330,35 +350,15 @@ export function TableView({ items, wishlistMode }: Props) {
   );
 }
 
-// Sub-componente para el encabezado con su manija de arrastre
-function HeaderCell({
-  label,
-  colKey,
-  width,
-  isDragging,
-  align = 'left',
-  isLast = false,
-  onResizeStart,
-  onNudge,
-}: HeaderCellProps) {
+function HeaderCell({ label, colKey, width, isDragging, align = 'left', isLast = false, onResizeStart, onNudge }: HeaderCellProps) {
   const alignment = align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left';
-
   return (
     <th className={`relative px-3 py-3.5 font-bold ${alignment} ${isLast ? 'rounded-tr-2xl' : ''} ${colKey === 'article' ? 'rounded-tl-2xl' : ''}`}>
-      {/* pointer-events-none: el label nunca puede robarle el clic a la manija */}
       <span className="truncate block pointer-events-none">{label}</span>
-
-      {/* Manija de arrastre */}
       {!isLast && (
         <div
           role="separator"
-          aria-orientation="vertical"
-          aria-label={`Ajustar ancho de la columna ${label}`}
-          aria-valuenow={Math.round(width)}
-          aria-valuemin={Math.round(MIN_WIDTHS[colKey])}
-          aria-valuemax={100}
           tabIndex={0}
-          title="Arrastrá para ajustar el ancho. Usá ← → para ajustar de a poco."
           onMouseDown={(event) => onResizeStart(event, colKey)}
           onKeyDown={(event) => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;

@@ -40,7 +40,7 @@ export function ListView({ mode }: Props) {
   const scopeItems = useMemo(() => items.filter((i) => {
     if (isWish) return i.wishlist;
     if (isHistory) return i.bought && !i.wishlist;
-    return !i.wishlist && !i.bought;
+    return !i.wishlist; // <-- Ahora trae todos los no-wishlist (pendientes y comprados)
   }), [items, isWish, isHistory]);
 
   const categoryKey = isWish ? 'wishlistCategory' : 'category';
