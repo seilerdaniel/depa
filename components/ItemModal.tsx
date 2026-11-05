@@ -18,6 +18,8 @@ export function ItemModal() {
   const src = getItemImage(item);
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);
+  const hasTechnicalDetails = Boolean(item.brand || item.model || item.color);
+  const hasWarranty = item.warranty != null && item.warranty > 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedItem(null)}>
@@ -83,6 +85,14 @@ export function ItemModal() {
                   <p className="font-bold text-sm text-medium">{installments}</p>
                 </div>
               )}
+              {hasWarranty && (
+                <div className="bg-surface-2 p-3 rounded-xl border border-line">
+                  <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Garantía</p>
+                  <p className="font-bold text-sm text-ink">
+                    {item.warranty} {item.warranty === 1 ? 'mes' : 'meses'}
+                  </p>
+                </div>
+              )}
               {dims && (
                 <div className="bg-surface-2 p-3 rounded-xl border border-line">
                   <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Medidas</p>
@@ -91,6 +101,32 @@ export function ItemModal() {
               )}
             </div>
 
+            {hasTechnicalDetails && (
+              <div>
+                <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-2">Detalles Técnicos</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {item.brand && (
+                    <div className="bg-surface-2 p-3 rounded-xl border border-line">
+                      <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Marca</p>
+                      <p className="font-semibold text-sm text-ink truncate" title={item.brand}>{item.brand}</p>
+                    </div>
+                  )}
+                  {item.model && (
+                    <div className="bg-surface-2 p-3 rounded-xl border border-line">
+                      <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Modelo</p>
+                      <p className="font-semibold text-sm text-ink truncate" title={item.model}>{item.model}</p>
+                    </div>
+                  )}
+                  {item.color && (
+                    <div className="bg-surface-2 p-3 rounded-xl border border-line">
+                      <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Color</p>
+                      <p className="font-semibold text-sm text-ink truncate" title={item.color}>{item.color}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {item.notes && (
               <div>
                 <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-2">Notas</p>
@@ -98,7 +134,7 @@ export function ItemModal() {
               </div>
             )}
 
-            {(item.storeName || item.storeLocation || item.purchaseUrl) && (
+            {(item.storeName || item.storeLocation || item.purchaseUrl || item.orderNumber) && (
               <div>
                 <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-2">Tienda / Enlace</p>
                 <div className="flex flex-col gap-2">
@@ -106,6 +142,12 @@ export function ItemModal() {
                     <p className="text-sm text-ink flex items-center gap-2">
                       <Icon name="store" size={16} className="text-muted" />
                       {item.storeName} {item.storeLocation ? `· ${item.storeLocation}` : ''}
+                    </p>
+                  )}
+                  {item.orderNumber && (
+                    <p className="text-sm text-ink flex items-center gap-2">
+                      <Icon name="archive" size={16} className="text-muted" />
+                      <span>Orden: <span className="font-semibold">{item.orderNumber}</span></span>
                     </p>
                   )}
                   {item.purchaseUrl && (

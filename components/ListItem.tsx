@@ -32,6 +32,7 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
   };
 
   const src = getItemImage(item);
+  const identity = [item.brand, item.color].filter(Boolean).join(' · ');
 
   return (
     <li 
@@ -81,6 +82,7 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
         <h3 className={`text-sm font-semibold truncate ${item.bought && !wishlistMode ? 'line-through text-muted' : 'text-ink'}`}>
           {item.name}
         </h3>
+        {identity && <p className="text-[0.7rem] text-muted truncate">{identity}</p>}
         <p className={`text-sm font-bold mt-0.5 ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>
           {money(item.price)}
         </p>

@@ -146,9 +146,17 @@ export function normalizeItem(raw: unknown): Item | null {
     dimensions: normalizeDimensions(r.dimensions),
     installments: normalizeInstallments(r.installments),
     purchaseMonth: typeof r.purchaseMonth === 'string' && /^\d{4}-\d{2}$/.test(r.purchaseMonth) ? r.purchaseMonth : null,
-    notes,
+    notes, brand: normalizeLabel(r.brand, 40),
+    model: normalizeLabel(r.model, 40),
+    color: normalizeLabel(r.color, 30),
+    warranty: r.warranty === null || r.warranty === undefined || r.warranty === ''
+      ? null
+      : Number.isFinite(Number(r.warranty)) && Number(r.warranty) >= 0
+        ? Math.round(Number(r.warranty))
+        : null,
+    orderNumber: normalizeLabel(r.orderNumber, 50),
   };
-}
+};
 
 // ==========================================
 // FORMATEADORES DE VISTA (UI)

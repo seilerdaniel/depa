@@ -36,6 +36,7 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);
   const catIcon = CATEGORY_ICONS[item.category] || 'list';
+  const identity = [item.brand, item.color].filter(Boolean).join(' · ');
 
   const placeText = !item.purchaseUrl && (item.storeName || item.storeLocation) 
     ? [item.storeName, item.storeLocation].filter(Boolean).join(' · ') 
@@ -100,6 +101,8 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
         <h3 className={`text-sm font-semibold leading-tight line-clamp-2 mt-0.5 ${item.bought && !wishlistMode ? 'text-muted line-through' : 'text-ink'}`}>
           {item.name}
         </h3>
+
+        {identity && <p className="text-[0.65rem] text-muted truncate mt-0.5">{identity}</p>}
         
         {item.notes && <p className="text-[0.65rem] text-muted italic line-clamp-1 mt-0.5">"{item.notes}"</p>}
 

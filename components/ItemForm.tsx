@@ -12,14 +12,16 @@ interface FormState {
   purchaseMonth: string; installments: string; installmentAmount: string;
   imageUrl: string; photoData: string; purchaseUrl: string;
   storeName: string; storeLocation: string; height: string; width: string; depth: string; notes: string;
+  brand: string; model: string; color: string; warranty: string; orderNumber: string;
 }
 
-type Errors = Partial<Record<'name' | 'category' | 'price' | 'imageUrl' | 'purchaseUrl' | 'dimensions' | 'installments', string>>;
+type Errors = Partial<Record<'name' | 'category' | 'price' | 'imageUrl' | 'purchaseUrl' | 'dimensions' | 'installments' | 'warranty', string>>;
 
 const EMPTY: FormState = {
   name: '', category: '', subcategory: '', price: '', priority: 'media', wishlist: false,
   purchaseMonth: '', installments: '', installmentAmount: '', imageUrl: '', photoData: '',
-  purchaseUrl: '', storeName: '', storeLocation: '', height: '', width: '', depth: '', notes: ''
+  purchaseUrl: '', storeName: '', storeLocation: '', height: '', width: '', depth: '', notes: '',
+  brand: '', model: '', color: '', warranty: '', orderNumber: ''
 };
 
 export function ItemForm() {
@@ -51,6 +53,11 @@ export function ItemForm() {
         width: editingItem.dimensions?.width ? String(editingItem.dimensions.width) : '',
         depth: editingItem.dimensions?.depth ? String(editingItem.dimensions.depth) : '',
         notes: editingItem.notes || '',
+        brand: editingItem.brand || '',
+        model: editingItem.model || '',
+        color: editingItem.color || '',
+        warranty: editingItem.warranty && editingItem.warranty > 0 ? String(editingItem.warranty) : '',
+        orderNumber: editingItem.orderNumber || '',
       });
       setErrors({}); setPhotoStatus(''); setActiveTab('basico');
     } else {
@@ -107,10 +114,17 @@ export function ItemForm() {
       else if (!Number.isFinite(a) || a <= 0) errs.installments = 'Valor inválido.';
       else installments = { count: c, amount: Math.round(a * 100) / 100 };
     }
+    const warrantyRaw = form.warranty.trim();
+    let warranty: number | null = null;
+    if (warrantyRaw) {
+      const months = Number(warrantyRaw);
+      if (!Number.isInteger(months) || months < 0) errs.warranty = 'Usá meses enteros (ej. 12).';
+      else warranty = months;
+    }
 
     if (Object.keys(errs).some((k) => errs[k as keyof Errors])) {
       setErrors(errs);
-      if (errs.name || errs.category || errs.price) setActiveTab('basico');
+      if (errs.name || errs.category || errs.price || errs.warranty) setActiveTab('basico');
       else if (errs.installments) setActiveTab('financiero');
       else setActiveTab('detalles');
       return;
@@ -123,7 +137,12 @@ export function ItemForm() {
       priority: PRIORITY.has(form.priority) ? form.priority : 'media' as const, wishlist: form.wishlist,
       purchaseMonth: form.purchaseMonth || null, purchaseUrl: purchaseUrl || '', imageUrl: imageUrl || '', imageData: form.photoData || '',
       storeName: normalizeLabel(form.storeName, 80), storeLocation: normalizeLabel(form.storeLocation, 120),
-      dimensions, installments, notes: normalizeLabel(form.notes, 250)
+      dimensions, installments, notes: normalizeLabel(form.notes, 250),
+      brand: normalizeLabel(form.brand, 40),
+      model: normalizeLabel(form.model, 40),
+      color: normalizeLabel(form.color, 30),
+      warranty,
+      orderNumber: normalizeLabel(form.orderNumber, 50),
     };
 
     if (editingItem) { updateItem({ ...editingItem, ...itemData }); setEditingItem(null); }
@@ -207,6 +226,36 @@ export function ItemForm() {
                   </div>
                 </Field>
               </div>
+
+              <div className="grid gap-3">
+                <p className="text-sm font-bold text-ink-soft flex items-center gap-2"><Icon name="brand" size={16} /> Detalles del producto</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Marca">
+                    <input type="text" maxLength={40} placeholder="Ej. Samsung" value={form.brand} onChange={(e) => update('brand', e.target.value)} className={inputCls(false)} />
+                  </Field>
+                  <Field label="Modelo">
+                    <input type="text" maxLength={40} placeholder="Ej. RT38" value={form.model} onChange={(e) => update('model', e.target.value)} className={inputCls(false)} />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Color">
+                    <input type="text" maxLength={30} placeholder="Ej. Negro" value={form.color} onChange={(e) => update('color', e.target.value)} className={inputCls(false)} />
+                  </Field>
+                  <Field label="Garantía (meses)" error={errors.warranty}>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      step={1}
+                      placeholder="Ej. 12"
+                      value={form.warranty}
+                      onChange={(e) => { update('warranty', e.target.value); clearError('warranty'); }}
+                      className={`${inputCls(!!errors.warranty)} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
+                    />
+                  </Field>
+                </div>
+              </div>
+
               <label className={`flex items-start gap-2.5 p-3 border rounded-xl cursor-pointer transition-colors ${form.wishlist ? 'border-accent bg-accent-soft' : 'border-line bg-surface-2 hover:bg-surface-3'}`}>
                 <input type="checkbox" checked={form.wishlist} onChange={(e) => update('wishlist', e.target.checked)} className="sr-only peer" />
                 <span className={`relative w-[38px] h-[22px] mt-0.5 rounded-full shrink-0 transition-colors ${form.wishlist ? 'bg-accent' : 'bg-line-strong'}`}><span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${form.wishlist ? 'translate-x-4' : ''}`} /></span>
@@ -295,12 +344,17 @@ export function ItemForm() {
           {/* ================= PESTAÑA: DETALLES ================= */}
           {activeTab === 'detalles' && (
             <div className="grid gap-4 animate-in fade-in">
-              <Field label="URL del artículo" error={errors.purchaseUrl}>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon name="globe" size={14} /></span>
-                  <input type="url" placeholder="https://..." value={form.purchaseUrl} onChange={(e) => { update('purchaseUrl', e.target.value); clearError('purchaseUrl'); }} className={`${inputCls(!!errors.purchaseUrl)} pl-8 text-sm`} />
-                </div>
-              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="URL del artículo" error={errors.purchaseUrl}>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon name="globe" size={14} /></span>
+                    <input type="url" placeholder="https://..." value={form.purchaseUrl} onChange={(e) => { update('purchaseUrl', e.target.value); clearError('purchaseUrl'); }} className={`${inputCls(!!errors.purchaseUrl)} pl-8 text-sm`} />
+                  </div>
+                </Field>
+                <Field label="Nro de orden">
+                  <input type="text" maxLength={50} placeholder="Ej. 1234-5678" value={form.orderNumber} onChange={(e) => update('orderNumber', e.target.value)} className={inputCls(false)} />
+                </Field>
+              </div>
               <Field label={<>Notas <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase">Opcional</span></>}>
                 <textarea rows={2} maxLength={250} placeholder="Ej. Color, medidas..." value={form.notes} onChange={(e) => update('notes', e.target.value)} className={`${inputCls(false)} py-2 resize-none min-h-[60px]`} />
               </Field>

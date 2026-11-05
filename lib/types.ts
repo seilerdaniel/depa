@@ -34,6 +34,11 @@ export interface Item {
   installments: Installments | null;
   purchaseMonth: string | null;
   notes: string;
+  brand: string;
+  model: string;
+  color: string;
+  warranty: number | null;
+  orderNumber: string;
 }
 
 export interface Prefs {
