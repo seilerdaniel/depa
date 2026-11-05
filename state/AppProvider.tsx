@@ -10,7 +10,7 @@ import {
   saveItems, savePrefs, saveCategories, mergeItemCategories,
 } from '@/lib/storage';
 import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
-import { createId, normalizeLabel } from '@/lib/utils';
+import { createId, normalizeLabel, normalizeItem } from '@/lib/utils';
 import type { Item, Prefs, View } from '@/lib/types';
 
 export type Theme = 'light' | 'dark' | 'system';
@@ -128,6 +128,24 @@ export interface ToastState {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+}
+
+export interface ToastOptions {
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+export interface BackupExportData {
+  items: Item[];
+  categories: string[];
+  prefs: Prefs;
+  version: number;
+}
+
+export interface BackupImportData {
+  items: unknown[];
+  categories?: string[];
+  prefs?: Prefs;
 }
 
 export interface DataValue {
@@ -549,20 +567,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
           throw new Error('Formato de archivo inválido');
         }
 
+        // BLINDAJE: Normalizamos cada artículo y filtramos los que sean inválidos
+        const validItems = parsed.items
+          .map((raw: unknown) => normalizeItem(raw))
+          .filter((i: Item | null): i is Item => i !== null);
+          
+        if (validItems.length === 0 && parsed.items.length > 0) {
+          throw new Error('El archivo no contiene artículos válidos.');
+        }
+
         dispatch({
           type: 'init',
           payload: {
-            items: parsed.items,
+            items: validItems, // <-- Ahora usamos los artículos validados
             categories: parsed.categories || DEFAULT_CATEGORIES,
             prefs: parsed.prefs || DEFAULT_PREFS,
             view: 'list'
           }
         });
 
-        showToast('Datos importados correctamente');
+        showToast(`Datos importados correctamente (${validItems.length} artículos)`);
         dispatch({ type: 'set-view', view: 'list' });
-      } catch (err) {
-        showToast('Error al leer el archivo. Asegúrate de que sea un backup válido.');
+      } catch (err: any) {
+        showToast(err.message || 'Error al leer el archivo. Asegúrate de que sea un backup válido.');
       }
     };
     reader.readAsText(file);
