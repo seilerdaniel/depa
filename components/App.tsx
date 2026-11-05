@@ -11,6 +11,7 @@ import { Moodboard } from './Moodboard';
 import { Toast } from './Toast';
 import { ItemModal } from './ItemModal';
 import { CategoryManager } from './CategoryManager';
+import { ErrorBoundary } from './ErrorBoundary';
 
 // 1. El import dinámico va AFUERA del componente para que se evalúe UNA sola vez
 const Dashboard = dynamic(() => import('./Dashboard').then((mod) => mod.Dashboard), {
@@ -48,37 +49,45 @@ function Shell() {
           <ViewTabs />
         </div>
 
-        <div className="grid gap-6 pt-2 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
-          {view === 'list' && (
-            <>
-              <aside className="lg:sticky lg:top-4 min-w-0">
-                <ItemForm />
-              </aside>
-              <div className="min-w-0">
-                <ListView mode="list" />
+        <ErrorBoundary key={view}>
+          <div className="grid gap-6 pt-2 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
+            {view === 'list' && (
+              <>
+                <aside className="lg:sticky lg:top-4 min-w-0">
+                  <ItemForm />
+                </aside>
+                <div className="min-w-0">
+                  <ListView mode="list" />
+                </div>
+              </>
+            )}
+
+            {view === 'wishlist' && (
+              <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <ListView mode="wishlist" />
               </div>
-            </>
-          )}
+            )}
 
-          {view === 'wishlist' && (
-            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
-              <ListView mode="wishlist" />
-            </div>
-          )}
+            {view === 'history' && (
+              <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <ListView mode="history" />
+              </div>
+            )}
 
-          {view === 'moodboard' && (
-            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
-              <Moodboard />
-            </div>
-          )}
+            {view === 'moodboard' && (
+              <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <Moodboard />
+              </div>
+            )}
 
-          {view === 'dashboard' && (
-            <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
-              {/* 2. Aquí usamos el componente dinámico */}
-              <Dashboard />
-            </div>
-          )}
-        </div>
+            {view === 'dashboard' && (
+              <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                {/* 2. Aquí usamos el componente dinámico */}
+                <Dashboard />
+              </div>
+            )}
+          </div>
+        </ErrorBoundary>
       </main>
 
       <Toast />
