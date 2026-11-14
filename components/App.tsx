@@ -40,11 +40,73 @@ const PURCHASE_VIEWS: readonly View[] = ['list', 'wishlist', 'moodboard', 'dashb
 
 function Shell() {
   const { ready } = useData();
-  const { view, setEditingItem } = useUI();
+  const {
+    view, setView, setEditingItem,
+    selectedItem, buyPromptItemId, isCategoryManagerOpen, itemFormOpen,
+  } = useUI();
+
+  const isPurchaseView = PURCHASE_VIEWS.includes(view);
 
   useEffect(() => {
     setEditingItem(null);
   }, [view, setEditingItem]);
+
+  // ==========================================
+  // ATAJOS DE TECLADO (escritorio)
+  // ==========================================
+  useEffect(() => {
+    const isTyping = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      return (
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target.isContentEditable
+      );
+    };
+
+    const focusSearch = () => {
+      // Un solo buscador montado a la vez, así que el selector no es ambiguo.
+      const selector = isPurchaseView
+        ? '[data-search-target="items"]'
+        : '[data-search-target="finance"]';
+      const input = document.querySelector<HTMLInputElement>(selector);
+      input?.focus();
+      input?.select();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Nunca robamos teclas mientras el usuario escribe: ahí "/" es una barra.
+      if (isTyping(event.target)) return;
+
+      const modalOpen = Boolean(selectedItem || buyPromptItemId || isCategoryManagerOpen);
+
+      if (event.key === 'Escape' || (event.altKey && event.key === 'ArrowLeft')) {
+        // Los modales manejan su propio Escape; acá sólo navegamos.
+        if (modalOpen) return;
+        if (view === 'home') return;
+        event.preventDefault();
+        setView('home');
+        return;
+      }
+
+      const ctrlK = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k';
+      const slash = event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey;
+
+      if (ctrlK || slash) {
+        if (!isPurchaseView && view !== 'finance') return;
+        event.preventDefault();
+        focusSearch();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    view, setView, isPurchaseView,
+    selectedItem, buyPromptItemId, isCategoryManagerOpen,
+  ]);
 
   if (!ready) {
     return (
@@ -53,8 +115,6 @@ function Shell() {
       </div>
     );
   }
-
-  const isPurchaseView = PURCHASE_VIEWS.includes(view);
 
   return (
     <div className="min-h-[100dvh] flex flex-col">
@@ -76,7 +136,13 @@ function Shell() {
           <ErrorBoundary key={view}>
             <PurchasesPanel />
 
-            <div className="grid gap-6 pt-6 items-start lg:grid-cols-[370px_minmax(0,1fr)]">
+            <div
+              className={`grid gap-6 pt-6 items-start ${
+                view === 'list' && !itemFormOpen
+                  ? 'grid-cols-1'
+                  : 'lg:grid-cols-[370px_minmax(0,1fr)]'
+              }`}
+            >
               {view === 'list' && (
                 <>
                   <aside className="lg:sticky lg:top-4 min-w-0">

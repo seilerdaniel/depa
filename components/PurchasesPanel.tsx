@@ -16,7 +16,7 @@ const formatBudget = (value: number) => budgetFormatter.format(value);
 export function PurchasesPanel() {
   const { items } = useData();
   const { prefs, setPrefs } = usePrefs();
-  const { setView } = useUI();
+  const { setView, setItemFormOpen } = useUI();
 
   const budget = prefs.budget;
 
@@ -70,9 +70,13 @@ export function PurchasesPanel() {
 
   const startNewPurchase = () => {
     setView('list');
+    // Expandimos el panel lateral y llevamos el foco al nombre: el usuario
+    // no tiene que buscarlo ni abrir nada a mano.
+    setItemFormOpen(true);
     window.setTimeout(() => {
       document.getElementById('item-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 60);
+      document.querySelector<HTMLInputElement>('[data-item-form-name]')?.focus();
+    }, 80);
   };
 
   return (

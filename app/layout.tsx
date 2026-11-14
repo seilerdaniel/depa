@@ -45,11 +45,11 @@ export default function RootLayout({
             __html: `
               try {
                 const theme = localStorage.getItem('depa.theme');
-                if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-                  document.documentElement.classList.add('dark');
-                } else {
-                  document.documentElement.classList.remove('dark');
-                }
+                const isDark = theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                document.documentElement.classList.toggle('dark', isDark);
+                // Los controles nativos (select, date, scrollbars) se pintan
+                // desde el primer frame, sin destellos blancos.
+                document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
               } catch (_) {}
             `,
           }}

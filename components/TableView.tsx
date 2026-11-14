@@ -330,13 +330,13 @@ export function TableView({ items, wishlistMode }: Props) {
                 {visibleCols.actions && (
                   <td className="px-3 py-3 text-right">
                     <div className="flex items-center justify-end gap-0.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => handleEdit(item)} className="p-1.5 text-muted hover:text-ink hover:bg-surface-3 rounded-lg" title="Editar"><Icon name="edit" size={15} /></button>
+                      <button type="button" onClick={() => handleEdit(item)} className="p-1.5 text-muted hover:text-ink hover:bg-surface-3 rounded-lg" title="Editar" aria-label={`Editar ${item.name}`}><Icon name="edit" size={15} /></button>
                       {!wishlistMode ? (
-                        <button onClick={() => setWishlist(item.id, true)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Wishlist"><Icon name="wishlist" size={15} /></button>
+                        <button type="button" onClick={() => setWishlist(item.id, true)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Wishlist" aria-label={`Guardar ${item.name} en la wishlist`}><Icon name="wishlist" size={15} /></button>
                       ) : (
-                        <button onClick={() => handleMoveToList(item.id)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Mover"><Icon name="list" size={15} /></button>
+                        <button type="button" onClick={() => handleMoveToList(item.id)} className="p-1.5 text-muted hover:text-accent-ink hover:bg-accent-soft rounded-lg" title="Mover" aria-label={`Mover ${item.name} a la lista`}><Icon name="list" size={15} /></button>
                       )}
-                      <button onClick={() => removeItem(item.id)} className="p-1.5 text-muted hover:text-danger hover:bg-danger-soft rounded-lg" title="Eliminar"><Icon name="delete" size={15} /></button>
+                      <button type="button" onClick={() => removeItem(item.id)} className="p-1.5 text-muted hover:text-danger hover:bg-danger-soft rounded-lg" title="Eliminar" aria-label={`Eliminar ${item.name}`}><Icon name="delete" size={15} /></button>
                     </div>
                   </td>
                 )}

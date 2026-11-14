@@ -119,14 +119,14 @@ export function ListView({ mode }: Props) {
         <div className="flex items-center gap-3 ml-auto">
 
           {/* BOTONES DE VISTA (Grid, List, Table) */}
-          <div className="flex items-center gap-1 p-1 bg-surface-2 border border-line rounded-lg shadow-sm">
-            <button onClick={() => setPrefs({ viewMode: 'grid' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'grid' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tarjetas">
+          <div className="flex items-center gap-1 p-1 bg-surface-2 border border-line rounded-lg shadow-sm" role="group" aria-label="Modo de vista">
+            <button type="button" onClick={() => setPrefs({ viewMode: 'grid' })} aria-pressed={prefs.viewMode === 'grid'} aria-label="Vista de tarjetas" className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'grid' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tarjetas">
               <Icon name="grid" size={16} />
             </button>
-            <button onClick={() => setPrefs({ viewMode: 'list' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'list' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de lista">
+            <button type="button" onClick={() => setPrefs({ viewMode: 'list' })} aria-pressed={prefs.viewMode === 'list'} aria-label="Vista de lista" className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'list' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de lista">
               <Icon name="menu" size={16} />
             </button>
-            <button onClick={() => setPrefs({ viewMode: 'table' })} className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'table' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tabla">
+            <button type="button" onClick={() => setPrefs({ viewMode: 'table' })} aria-pressed={prefs.viewMode === 'table'} aria-label="Vista de tabla" className={`p-1.5 rounded-md transition-colors ${prefs.viewMode === 'table' ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`} title="Vista de tabla">
               <Icon name="table" size={16} />
             </button>
           </div>
@@ -145,6 +145,7 @@ export function ListView({ mode }: Props) {
             <input
               id={`search-${mode}`}
               type="search"
+              data-search-target="items"
               placeholder="Ej. Heladera..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}

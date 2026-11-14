@@ -27,7 +27,7 @@ const EMPTY: FormState = {
 
 export function ItemForm() {
   const { items, categories, addItem, updateItem, addCategory } = useData();
-  const { editingItem, setEditingItem } = useUI();
+  const { editingItem, setEditingItem, itemFormOpen, setItemFormOpen } = useUI();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [activeTab, setActiveTab] = useState<'basico' | 'financiero' | 'detalles'>('basico');
@@ -66,6 +66,11 @@ export function ItemForm() {
       setForm(EMPTY);
     }
   }, [editingItem]);
+
+  // Editar un artículo exige ver el formulario: si estaba colapsado, se abre.
+  useEffect(() => {
+    if (editingItem) setItemFormOpen(true);
+  }, [editingItem, setItemFormOpen]);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((p) => ({ ...p, [key]: value }));
   const clearError = (key: keyof Errors) => setErrors((e) => ({ ...e, [key]: undefined }));
@@ -172,30 +177,44 @@ export function ItemForm() {
       id="item-form"
       className="border border-line rounded-3xl bg-surface shadow-soft flex flex-col overflow-hidden"
     >
-      <div className="p-4 border-b border-line flex justify-between items-start bg-surface-2/30">
-        <div>
-          <h2 className="text-base font-semibold tracking-tight text-ink">{editingItem ? 'Editar artículo' : 'Agregar artículo'}</h2>
-          <p className="text-xs text-muted mt-0.5">{editingItem ? 'Modificá los datos.' : 'Completá los datos.'}</p>
-        </div>
-        {editingItem && <button type="button" onClick={cancelEdit} className="text-xs font-semibold text-muted hover:text-danger hover:bg-danger-soft px-2 py-1 rounded-md transition-colors">Cancelar</button>}
-      </div>
-
-      <div className="flex px-2 pt-2 bg-surface-2/30 border-b border-line">
-        {[{ id: 'basico', label: 'Básico', icon: 'list' }, { id: 'financiero', label: 'Finanzas', icon: 'finance' }, { id: 'detalles', label: 'Extras', icon: 'store' }].map((tab) => (
-          <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id as any)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-1 text-xs sm:text-sm font-semibold rounded-t-xl transition-colors ${activeTab === tab.id ? 'bg-surface text-accent-ink border-x border-t border-line -mb-[1px]' : 'text-muted hover:text-ink'}`}>
-            <Icon name={tab.icon} size={14} />{tab.label}
+      <div className="p-3 border-b border-line flex justify-between items-center gap-2 bg-surface-2/30">
+        <h2 className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => setItemFormOpen(!itemFormOpen)}
+            aria-expanded={itemFormOpen}
+            aria-controls={itemFormOpen ? 'item-form-body' : undefined}
+            className="flex w-full items-center gap-2 rounded-xl px-1 py-1 text-left transition-colors hover:text-accent-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent/20"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-base font-semibold tracking-tight text-ink">{editingItem ? 'Editar artículo' : 'Agregar artículo'}</span>
+              <span className="block text-xs text-muted mt-0.5">{editingItem ? 'Modificá los datos.' : 'Completá los datos.'}</span>
+            </span>
+            <span className="sr-only">{itemFormOpen ? 'Ocultar formulario' : 'Mostrar formulario'}</span>
+            <Icon name="chevron" size={16} className={`shrink-0 text-muted transition-transform duration-200 ${itemFormOpen ? 'rotate-180' : ''}`} />
           </button>
-        ))}
+        </h2>
+        {editingItem && <button type="button" onClick={cancelEdit} className="shrink-0 text-xs font-semibold text-muted hover:text-danger hover:bg-danger-soft px-2 py-1 rounded-md transition-colors">Cancelar</button>}
       </div>
 
-      <form onSubmit={submit} noValidate className="flex-1 flex flex-col">
+      {itemFormOpen && (
+        <div id="item-form-body" className="flex flex-1 flex-col">
+          <div className="flex px-2 pt-2 bg-surface-2/30 border-b border-line">
+            {[{ id: 'basico', label: 'Básico', icon: 'list' }, { id: 'financiero', label: 'Finanzas', icon: 'finance' }, { id: 'detalles', label: 'Extras', icon: 'store' }].map((tab) => (
+              <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id as any)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-1 text-xs sm:text-sm font-semibold rounded-t-xl transition-colors ${activeTab === tab.id ? 'bg-surface text-accent-ink border-x border-t border-line -mb-[1px]' : 'text-muted hover:text-ink'}`}>
+                <Icon name={tab.icon} size={14} />{tab.label}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={submit} noValidate className="flex-1 flex flex-col">
         <div className="p-4 sm:p-5 h-[400px] overflow-y-auto">
 
           {/* ================= PESTAÑA: BÁSICO ================= */}
           {activeTab === 'basico' && (
             <div className="grid gap-4 animate-in fade-in">
               <Field label="Nombre del artículo" error={errors.name}>
-                <input ref={nameRef} type="text" maxLength={60} placeholder="Ej. Heladera con freezer" value={form.name} onChange={(e) => { update('name', e.target.value); clearError('name'); }} className={inputCls(!!errors.name)} />
+                <input ref={nameRef} data-item-form-name type="text" maxLength={60} placeholder="Ej. Heladera con freezer" value={form.name} onChange={(e) => { update('name', e.target.value); clearError('name'); }} className={inputCls(!!errors.name)} />
               </Field>
               <Field label="Categoría" error={errors.category}>
                 <div className="flex gap-2">
@@ -206,7 +225,7 @@ export function ItemForm() {
                     </select>
                     <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                   </div>
-                  <button type="button" onClick={() => setShowCatCreator((s) => !s)} className="w-11 h-11 shrink-0 border border-line-strong rounded-xl bg-surface text-muted hover:border-accent hover:bg-accent-soft hover:text-accent-ink transition-colors flex items-center justify-center"><Icon name="add" size={17} /></button>
+                  <button type="button" onClick={() => setShowCatCreator((s) => !s)} aria-expanded={showCatCreator} aria-label={showCatCreator ? 'Cancelar nueva categoría' : 'Crear nueva categoría'} className="w-11 h-11 shrink-0 border border-line-strong rounded-xl bg-surface text-muted hover:border-accent hover:bg-accent-soft hover:text-accent-ink transition-colors flex items-center justify-center"><Icon name="add" size={17} /></button>
                 </div>
                 {showCatCreator && (
                   <div className="grid gap-1.5 mt-2 p-2.5 border border-dashed border-line-strong rounded-xl bg-surface-2 animate-in slide-in-from-top-2 duration-200">
@@ -214,7 +233,7 @@ export function ItemForm() {
                     <div className="flex items-center gap-2">
                       <input type="text" maxLength={40} value={newCat} placeholder="Ej. Iluminación" onChange={(e) => { setNewCat(e.target.value); setNewCatErr(''); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createCat(); } if (e.key === 'Escape') setShowCatCreator(false); }} className="flex-1 min-h-[38px] px-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent" />
                       <button type="button" onClick={createCat} className="min-h-[38px] px-3.5 rounded-xl bg-accent text-accent-on text-sm font-semibold hover:bg-accent-ink transition-colors">Crear</button>
-                      <button type="button" onClick={() => { setShowCatCreator(false); setNewCatErr(''); }} className="grid place-items-center w-9 h-9 rounded-xl text-muted hover:bg-danger-soft hover:text-danger transition-colors"><Icon name="cancel" size={15} /></button>
+                      <button type="button" onClick={() => { setShowCatCreator(false); setNewCatErr(''); }} aria-label="Cerrar nueva categoría" className="grid place-items-center w-9 h-9 rounded-xl text-muted hover:bg-danger-soft hover:text-danger transition-colors"><Icon name="cancel" size={15} /></button>
                     </div>
                     {newCatErr && <p className="text-xs text-danger">{newCatErr}</p>}
                   </div>
@@ -409,7 +428,7 @@ export function ItemForm() {
               {form.photoData && (
                 <div className="relative w-full h-24 rounded-xl overflow-hidden border border-line">
                   <img src={form.photoData} alt="Previsualización" className="w-full h-full object-cover" />
-                  <button type="button" onClick={() => { update('photoData', ''); setPhotoStatus(''); }} className="absolute top-1 right-1 grid place-items-center w-6 h-6 rounded-full bg-black/80 text-white hover:bg-danger transition-colors"><Icon name="cancel" size={14} /></button>
+                  <button type="button" onClick={() => { update('photoData', ''); setPhotoStatus(''); }} aria-label="Quitar foto" className="absolute top-1 right-1 grid place-items-center w-6 h-6 rounded-full bg-black/80 text-white hover:bg-danger transition-colors"><Icon name="cancel" size={14} /></button>
                 </div>
               )}
               {photoStatus && <p className="text-xs text-accent-ink font-semibold">{photoStatus}</p>}
@@ -436,7 +455,9 @@ export function ItemForm() {
             {editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a wishlist' : 'Agregar a la lista')}
           </button>
         </div>
-      </form>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

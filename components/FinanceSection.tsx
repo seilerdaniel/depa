@@ -201,6 +201,7 @@ export function FinanceSection() {
     updateAccount,
     deleteAccount,
     addTransaction,
+    updateTransaction,
     deleteTransaction,
     addSavingsGoal,
     updateSavingsGoal,
@@ -228,6 +229,13 @@ export function FinanceSection() {
   const [txNotes, setTxNotes] = useState('');
   const [txLinkedItemId, setTxLinkedItemId] = useState('');
   const [txError, setTxError] = useState('');
+
+  // --- Edición inline de movimientos (sólo metadatos) ---
+  const [editingTxId, setEditingTxId] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editError, setEditError] = useState('');
 
   // --- Metas de ahorro ---
   const [isGoalFormOpen, setGoalFormOpen] = useState(false);
@@ -368,9 +376,11 @@ export function FinanceSection() {
     return () => window.clearTimeout(timer);
   }, [confirmGoalDeleteId]);
 
-  // Cambiar cualquier filtro reinicia la paginación.
+  // Cambiar cualquier filtro reinicia la paginación y cierra la edición abierta.
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
+    setEditingTxId(null);
+    setEditError('');
   }, [txFilterAccount, txFilterType, txFilterMonth, txSearch]);
 
   const accountName = (id: string | null | undefined): string =>
@@ -662,6 +672,48 @@ export function FinanceSection() {
     setContributingGoalId(null);
     setContributionAmount('');
     setContributionError('');
+  };
+
+  // ==========================================
+  // EDICIÓN INLINE DE MOVIMIENTOS
+  // ==========================================
+  const openTransactionEdit = (transaction: Transaction) => {
+    if (editingTxId === transaction.id) {
+      setEditingTxId(null);
+      return;
+    }
+
+    setEditingTxId(transaction.id);
+    setEditCategory(transaction.category);
+    setEditNotes(transaction.notes);
+    setEditDate(toDateInput(new Date(transaction.date)));
+    setEditError('');
+  };
+
+  const cancelTransactionEdit = () => {
+    setEditingTxId(null);
+    setEditError('');
+  };
+
+  const handleTransactionEditSubmit = (
+    event: FormEvent<HTMLFormElement>,
+    transaction: Transaction,
+  ) => {
+    event.preventDefault();
+
+    const done = updateTransaction(transaction.id, {
+      category: editCategory,
+      notes: editNotes,
+      date: parseDateInput(editDate),
+    });
+
+    if (!done) {
+      setEditError('No se pudo actualizar el movimiento.');
+      return;
+    }
+
+    setEditingTxId(null);
+    setEditError('');
   };
 
   // ==========================================
@@ -1684,6 +1736,7 @@ export function FinanceSection() {
             <input
               id="tx-filter-search"
               type="search"
+              data-search-target="finance"
               value={txSearch}
               onChange={(event) => setTxSearch(event.target.value)}
               placeholder="Categoría, nota o artículo"
@@ -1764,48 +1817,178 @@ export function FinanceSection() {
                   : undefined;
 
                 return (
-                  <li key={transaction.id} className="group flex items-center gap-3 px-4 py-3">
-                    <span
-                      className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${meta.chip}`}
-                      aria-label={meta.label}
-                    >
-                      {meta.symbol}
-                    </span>
+                  <li
+                    key={transaction.id}
+                    className={
+                      editingTxId === transaction.id
+                        ? 'bg-surface-2/40 px-4 py-3'
+                        : 'group flex items-center gap-3 px-4 py-3'
+                    }
+                  >
+                    {editingTxId === transaction.id ? (
+                      <form
+                        onSubmit={(event) => handleTransactionEditSubmit(event, transaction)}
+                        onKeyDown={(event) => {
+                          // Escape cierra la edición sin navegar a Inicio.
+                          if (event.key === 'Escape') {
+                            event.stopPropagation();
+                            cancelTransactionEdit();
+                          }
+                        }}
+                        className="grid gap-3 animate-in fade-in duration-200"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-ink">
+                            {title}
+                            <span className="ml-2 font-bold tabular-nums">
+                              {signedAmount(transaction)}
+                            </span>
+                          </p>
+                          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider text-muted">
+                            Monto, tipo y cuentas bloqueados
+                          </span>
+                        </div>
 
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-ink">{title}</p>
-                      <p className="truncate text-xs text-muted">
-                        {transaction.type === 'transferencia'
-                          ? `${accountName(transaction.accountId)} → ${accountName(
-                              transaction.destinationAccountId,
-                            )}`
-                          : accountName(transaction.accountId)}
-                        <span className="mx-1.5 text-muted/50">·</span>
-                        {dateFormatter.format(new Date(transaction.date))}
-                      </p>
-                      {linkedName && (
-                        <p className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-accent-soft px-2 py-0.5 text-[0.65rem] font-semibold text-accent-ink">
-                          <Icon name="shopping-cart" size={11} className="shrink-0" />
-                          <span className="truncate">{linkedName}</span>
-                        </p>
-                      )}
-                      {transaction.notes && (
-                        <p className="truncate text-[0.7rem] text-muted">{transaction.notes}</p>
-                      )}
-                    </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="grid gap-1.5">
+                            <label
+                              htmlFor={`tx-edit-category-${transaction.id}`}
+                              className={LABEL_CLASS}
+                            >
+                              Categoría
+                            </label>
+                            <input
+                              id={`tx-edit-category-${transaction.id}`}
+                              type="text"
+                              value={editCategory}
+                              onChange={(event) => {
+                                setEditCategory(event.target.value);
+                                setEditError('');
+                              }}
+                              maxLength={40}
+                              autoFocus
+                              className={INPUT_CLASS}
+                            />
+                          </div>
 
-                    <span className={`shrink-0 text-sm font-bold tabular-nums ${meta.tone}`}>
-                      {signedAmount(transaction)}
-                    </span>
+                          <div className="grid gap-1.5">
+                            <label
+                              htmlFor={`tx-edit-date-${transaction.id}`}
+                              className={LABEL_CLASS}
+                            >
+                              Fecha
+                            </label>
+                            <input
+                              id={`tx-edit-date-${transaction.id}`}
+                              type="date"
+                              value={editDate}
+                              onChange={(event) => {
+                                setEditDate(event.target.value);
+                                setEditError('');
+                              }}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                        </div>
 
-                    <button
-                      type="button"
-                      onClick={() => deleteTransaction(transaction.id)}
-                      aria-label={`Eliminar movimiento: ${title}`}
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted opacity-0 transition-all hover:bg-danger-soft hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
-                    >
-                      <Icon name="delete" size={15} />
-                    </button>
+                        <div className="grid gap-1.5">
+                          <label
+                            htmlFor={`tx-edit-notes-${transaction.id}`}
+                            className={LABEL_CLASS}
+                          >
+                            Notas
+                          </label>
+                          <input
+                            id={`tx-edit-notes-${transaction.id}`}
+                            type="text"
+                            value={editNotes}
+                            onChange={(event) => {
+                              setEditNotes(event.target.value);
+                              setEditError('');
+                            }}
+                            maxLength={250}
+                            placeholder="Sin notas"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+
+                        {editError && (
+                          <p role="alert" className="text-xs font-semibold text-danger">
+                            {editError}
+                          </p>
+                        )}
+
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={cancelTransactionEdit}
+                            className="min-h-[36px] rounded-lg px-3 text-xs font-semibold text-muted transition-colors hover:text-ink"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-bold text-accent-on transition-colors hover:bg-accent-ink"
+                          >
+                            <Icon name="check" size={14} />
+                            Guardar
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <span
+                          className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${meta.chip}`}
+                          aria-label={meta.label}
+                        >
+                          {meta.symbol}
+                        </span>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-ink">{title}</p>
+                          <p className="truncate text-xs text-muted">
+                            {transaction.type === 'transferencia'
+                              ? `${accountName(transaction.accountId)} → ${accountName(
+                                  transaction.destinationAccountId,
+                                )}`
+                              : accountName(transaction.accountId)}
+                            <span className="mx-1.5 text-muted/50">·</span>
+                            {dateFormatter.format(new Date(transaction.date))}
+                          </p>
+                          {linkedName && (
+                            <p className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-accent-soft px-2 py-0.5 text-[0.65rem] font-semibold text-accent-ink">
+                              <Icon name="shopping-cart" size={11} className="shrink-0" />
+                              <span className="truncate">{linkedName}</span>
+                            </p>
+                          )}
+                          {transaction.notes && (
+                            <p className="truncate text-[0.7rem] text-muted">{transaction.notes}</p>
+                          )}
+                        </div>
+
+                        <span className={`shrink-0 text-sm font-bold tabular-nums ${meta.tone}`}>
+                          {signedAmount(transaction)}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => openTransactionEdit(transaction)}
+                          aria-label={`Editar movimiento: ${title}`}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted opacity-0 transition-all hover:bg-surface-3 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <Icon name="edit" size={15} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => deleteTransaction(transaction.id)}
+                          aria-label={`Eliminar movimiento: ${title}`}
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted opacity-0 transition-all hover:bg-danger-soft hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <Icon name="delete" size={15} />
+                        </button>
+                      </>
+                    )}
                   </li>
                 );
               })}

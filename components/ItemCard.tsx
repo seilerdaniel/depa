@@ -209,17 +209,17 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
         )}
 
         <div className="flex items-center gap-0.5 ml-auto opacity-60 group-hover:opacity-100 transition-opacity shrink-0">
-          <button type="button" onClick={handleEdit} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-surface-2 hover:text-ink" title="Editar">
+          <button type="button" onClick={handleEdit} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-surface-2 hover:text-ink" title="Editar" aria-label={`Editar ${item.name}`}>
             <Icon name="edit" size={13} />
           </button>
           
           {!wishlistMode && (
-            <button type="button" onClick={() => setWishlist(item.id, true)} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-accent-soft hover:text-accent-ink" title="Guardar en wishlist">
+            <button type="button" onClick={() => setWishlist(item.id, true)} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-accent-soft hover:text-accent-ink" title="Guardar en wishlist" aria-label={`Guardar ${item.name} en la wishlist`}>
               <Icon name="wishlist" size={13} />
             </button>
           )}
           
-          <button type="button" onClick={() => removeItem(item.id)} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-danger-soft hover:text-danger" title="Eliminar">
+          <button type="button" onClick={() => removeItem(item.id)} className="grid place-items-center w-7 h-7 rounded-md text-muted hover:bg-danger-soft hover:text-danger" title="Eliminar" aria-label={`Eliminar ${item.name}`}>
             <Icon name="delete" size={13} />
           </button>
         </div>

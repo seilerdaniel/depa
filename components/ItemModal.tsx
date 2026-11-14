@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePurchasePayment, useUI } from '@/state/AppProvider';
 import {
   money, formatDimensions, formatInstallments, getItemImage, formatMonth,
@@ -15,6 +15,31 @@ export function ItemModal() {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const { selectedItem, setSelectedItem } = useUI();
   const payment = usePurchasePayment(selectedItem ?? { id: '', bought: false });
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Cambiar de artículo devuelve la imagen a su tamaño normal.
+  useEffect(() => {
+    setIsExpanded(false);
+    setFailedSrc(null);
+  }, [selectedItem?.id]);
+
+  // Foco al abrir y Escape para cerrar: comportamiento esperado de un diálogo.
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    dialogRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setSelectedItem(null);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedItem, setSelectedItem]);
 
   // 2. Después de los hooks, hacemos el retorno temprano
   if (!selectedItem) return null;
@@ -32,12 +57,17 @@ export function ItemModal() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedItem(null)}>
       <div
-        className="bg-surface w-full max-w-2xl max-h-[90vh] rounded-3xl border border-line shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="item-modal-title"
+        tabIndex={-1}
+        className="bg-surface w-full max-w-2xl max-h-[90vh] rounded-3xl border border-line shadow-2xl overflow-hidden flex flex-col outline-none animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-4 border-b border-line bg-surface-2/30">
-          <h3 className="font-bold text-lg text-ink truncate pr-4">{item.name}</h3>
-          <button onClick={() => setSelectedItem(null)} className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors">
+          <h3 id="item-modal-title" className="font-bold text-lg text-ink truncate pr-4">{item.name}</h3>
+          <button type="button" onClick={() => setSelectedItem(null)} aria-label="Cerrar detalle" className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors">
             <Icon name="cancel" size={20} />
           </button>
         </div>
@@ -59,8 +89,10 @@ export function ItemModal() {
 
                 {/* Botón flotante para expandir/minimizar */}
                 <button
+                  type="button"
                   onClick={() => setIsExpanded(!isExpanded)}
                   className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg"
+                  aria-label={isExpanded ? 'Ajustar imagen a pantalla' : 'Expandir imagen'}
                   title={isExpanded ? "Ajustar a pantalla" : "Expandir imagen"}
                 >
                   <Icon name={isExpanded ? 'minimize' : 'maximize'} size={16} />

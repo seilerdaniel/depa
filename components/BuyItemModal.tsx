@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useData, useFinance, useUI } from '@/state/AppProvider';
 import { money } from '@/lib/utils';
 import type { AccountType } from '@/lib/types';
@@ -31,12 +31,25 @@ export function BuyItemModal() {
 
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   const item = buyPromptItemId
     ? items.find((candidate) => candidate.id === buyPromptItemId)
     : undefined;
 
   useEffect(() => {
     if (buyPromptItemId) setSelectedAccountId(null);
+  }, [buyPromptItemId]);
+
+  // Al abrir, el foco entra al modal: primero la cuenta, o el diálogo si no hay.
+  useEffect(() => {
+    if (!buyPromptItemId) return;
+
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const firstOption = dialog.querySelector<HTMLElement>('[role="radio"]');
+    (firstOption ?? dialog).focus();
   }, [buyPromptItemId]);
 
   useEffect(() => {
@@ -68,11 +81,13 @@ export function BuyItemModal() {
       onClick={() => setBuyPromptItemId(null)}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="buy-prompt-title"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-2xl animate-in zoom-in-95 duration-200"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-2xl outline-none animate-in zoom-in-95 duration-200"
       >
         <header className="flex items-start justify-between gap-4 border-b border-line p-5">
           <div className="min-w-0">

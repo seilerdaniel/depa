@@ -65,9 +65,11 @@ export function ViewTabs() {
 
       {/* BOTÓN DE CONFIGURACIÓN DE CATEGORÍAS */}
       <button 
+        type="button"
         onClick={() => setCategoryManagerOpen(true)}
         className="p-2.5 rounded-xl border border-line bg-surface text-muted hover:text-ink hover:bg-surface-2 transition-colors shadow-sm"
         title="Gestionar Categorías"
+        aria-label="Gestionar categorías"
       >
         <Icon name="settings" size={18} />
       </button>

@@ -24,6 +24,9 @@ export function Header() {
     }
   };
 
+  const themeLabel =
+    theme === 'light' ? 'claro' : theme === 'dark' ? 'oscuro' : 'sistema';
+
   return (
     <header className="pt-7 pb-2">
       <div className="mx-auto w-[min(1180px,100%-32px)]">
@@ -98,8 +101,8 @@ export function Header() {
               type="button"
               onClick={toggleTheme}
               className="rounded-full border border-line bg-surface p-2 text-muted transition-colors hover:text-ink"
-              title={`Tema: ${theme}`}
-              aria-label={`Cambiar tema (actual: ${theme})`}
+              title={`Tema: ${themeLabel}`}
+              aria-label={`Cambiar tema (actual: ${themeLabel})`}
             >
               {theme === 'light' && <Icon name="sun" size={18} />}
               {theme === 'dark' && <Icon name="moon" size={18} />}

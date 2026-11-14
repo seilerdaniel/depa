@@ -145,14 +145,14 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
             <Icon name="check" size={16} className={item.bought ? 'text-accent' : ''} />
           </label>
         ) : (
-          <button onClick={() => { if (setWishlist(item.id, false)) setView('list'); }} className="p-2 hover:bg-accent-soft hover:text-accent rounded-lg text-muted transition-colors" title="Mover a lista">
+          <button type="button" onClick={() => { if (setWishlist(item.id, false)) setView('list'); }} className="p-2 hover:bg-accent-soft hover:text-accent rounded-lg text-muted transition-colors" title="Mover a lista" aria-label={`Mover ${item.name} a la lista`}>
             <Icon name="list" size={16} />
           </button>
         )}
-        <button onClick={() => setEditingItem(item)} className="p-2 hover:bg-surface-3 rounded-lg text-muted hover:text-ink transition-colors" title="Editar">
+        <button type="button" onClick={() => setEditingItem(item)} className="p-2 hover:bg-surface-3 rounded-lg text-muted hover:text-ink transition-colors" title="Editar" aria-label={`Editar ${item.name}`}>
           <Icon name="edit" size={16} />
         </button>
-        <button onClick={() => removeItem(item.id)} className="p-2 hover:bg-danger-soft rounded-lg text-muted hover:text-danger transition-colors" title="Eliminar">
+        <button type="button" onClick={() => removeItem(item.id)} className="p-2 hover:bg-danger-soft rounded-lg text-muted hover:text-danger transition-colors" title="Eliminar" aria-label={`Eliminar ${item.name}`}>
           <Icon name="delete" size={16} />
         </button>
       </div>

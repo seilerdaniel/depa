@@ -21,6 +21,9 @@ import type { Account, Item, Prefs, SavingsGoal, Transaction, View } from '@/lib
 
 export type Theme = 'light' | 'dark' | 'system';
 
+/** Misma clave que usa el script anti-FOUC de `app/layout.tsx`. */
+const THEME_STORAGE_KEY = 'depa.theme';
+
 // ==========================================
 // ESTADO Y ACCIONES DEL REDUCER
 // ==========================================
@@ -60,6 +63,11 @@ type Action =
   | { type: 'update-account'; account: Account }
   | { type: 'delete-account'; id: string }
   | { type: 'add-transaction'; transaction: Transaction }
+  | {
+      /** Edición de metadatos: nunca toca monto, tipo ni cuentas. */
+      type: 'update-transaction';
+      transaction: Transaction;
+    }
   | { type: 'delete-transaction'; id: string }
   | { type: 'add-savings-goal'; goal: SavingsGoal }
   | { type: 'update-savings-goal'; goal: SavingsGoal }
@@ -302,6 +310,23 @@ const reducer = (s: AppState, a: Action): AppState => {
         transactions: [a.transaction, ...s.transactions],
       };
 
+    case 'update-transaction':
+      // Sólo metadatos. Si acá se colara un cambio de monto o de cuenta,
+      // los saldos quedarían desincronizados del historial.
+      return {
+        ...s,
+        transactions: s.transactions.map((t) =>
+          t.id === a.transaction.id
+            ? {
+                ...t,
+                category: a.transaction.category,
+                notes: a.transaction.notes,
+                date: a.transaction.date,
+              }
+            : t,
+        ),
+      };
+
     case 'delete-transaction': {
       const transaction = s.transactions.find((t) => t.id === a.id);
       if (!transaction) return s;
@@ -432,6 +457,14 @@ export interface FinanceValue {
   updateAccount: (account: Account) => boolean;
   deleteAccount: (id: string) => void;
   addTransaction: (draft: Omit<Transaction, 'id'>) => boolean;
+  /**
+   * Editar categoría, notas y fecha de un movimiento.
+   * Monto, tipo y cuentas quedan fuera a propósito: son la base del saldo.
+   */
+  updateTransaction: (
+    id: string,
+    patch: { category: string; notes: string; date: number },
+  ) => boolean;
   deleteTransaction: (id: string) => void;
   addSavingsGoal: (draft: Omit<SavingsGoal, 'id' | 'createdAt'>) => boolean;
   updateSavingsGoal: (goal: SavingsGoal) => boolean;
@@ -454,6 +487,9 @@ export interface UIValue {
   setBuyPromptItemId: (id: string | null) => void;
   isCategoryManagerOpen: boolean;
   setCategoryManagerOpen: (open: boolean) => void;
+  /** Formulario lateral de alta: colapsado libera ancho para la grilla. */
+  itemFormOpen: boolean;
+  setItemFormOpen: (open: boolean) => void;
   theme: Theme;
   setTheme: (t: Theme) => void;
 }
@@ -539,9 +575,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
   const [isCategoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [itemFormOpen, setItemFormOpen] = useState(true);
 
   const setTheme = useCallback<UIValue['setTheme']>((nextTheme) => {
     setThemeState(nextTheme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Modo privado o almacenamiento lleno: el tema sigue andando en memoria.
+    }
+  }, []);
+
+  // La preferencia se lee después de montar: el script del layout ya aplicó
+  // la clase antes de hidratar, así que no hay destello ni mismatch de SSR.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        setThemeState(stored);
+      }
+    } catch {
+      // Sin acceso a localStorage nos quedamos con el tema del sistema.
+    }
   }, []);
 
   // Timers y refs
@@ -715,6 +770,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (theme === 'system' &&
           window.matchMedia('(prefers-color-scheme: dark)').matches);
       root.classList.toggle('dark', isDark);
+
+      // `color-scheme` es lo que hace que los controles NATIVOS de Windows
+      // (selects, inputs date/month, scrollbars) se pinten acordes al tema.
+      // Sin esto, el modo oscuro deja destellos blancos al abrirlos.
+      root.style.colorScheme = isDark ? 'dark' : 'light';
     };
 
     apply();
@@ -1002,6 +1062,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [state.accounts, announce, showToast]);
 
+  const updateTransaction = useCallback<FinanceValue['updateTransaction']>((id, patch) => {
+    const current = state.transactions.find((t) => t.id === id);
+    if (!current) return false;
+
+    dispatch({
+      type: 'update-transaction',
+      transaction: {
+        ...current,
+        category: normalizeLabel(patch.category, 40),
+        notes: normalizeLabel(patch.notes, 250),
+        date: Number.isFinite(patch.date) ? patch.date : current.date,
+      },
+    });
+
+    announce('Movimiento actualizado');
+    showToast('Movimiento actualizado');
+    return true;
+  }, [state.transactions, announce, showToast]);
+
   const deleteTransaction = useCallback<FinanceValue['deleteTransaction']>((id) => {
     if (!state.transactions.some((t) => t.id === id)) return;
 
@@ -1238,11 +1317,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     accounts: state.accounts,
     transactions: state.transactions,
     savingsGoals: state.savingsGoals,
-    addAccount, updateAccount, deleteAccount, addTransaction, deleteTransaction,
+    addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
   }), [
     state.accounts, state.transactions, state.savingsGoals,
-    addAccount, updateAccount, deleteAccount, addTransaction, deleteTransaction,
+    addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
   ]);
 
@@ -1273,12 +1352,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setBuyPromptItemId,
     isCategoryManagerOpen,
     setCategoryManagerOpen,
+    itemFormOpen,
+    setItemFormOpen,
     theme,
     setTheme,
   }), [
     state.view, state.editingItem, state.selectedItem, state.buyPromptItemId,
     setView, setEditingItem, setSelectedItem, setBuyPromptItemId,
     isCategoryManagerOpen,
+    itemFormOpen,
     theme, setTheme,
   ]);
 

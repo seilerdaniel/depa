@@ -40,7 +40,9 @@ export function Moodboard() {
           ].map((f) => (
             <button
               key={f.id}
+              type="button"
               onClick={() => setFilter(f.id as any)}
+              aria-pressed={filter === f.id}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${filter === f.id ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`}
             >
               {f.label}

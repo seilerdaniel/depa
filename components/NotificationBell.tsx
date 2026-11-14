@@ -59,13 +59,21 @@ export function NotificationBell() {
 
   return (
     <button
+      type="button"
       onClick={permission === 'granted' ? triggerNotification : requestPermission}
+      aria-label={
+        hasPending
+          ? 'Recordatorios: tenés compras planificadas este mes'
+          : permission === 'granted'
+            ? 'Probar notificación'
+            : 'Activar notificaciones'
+      }
       className="relative p-2 rounded-full border border-line bg-surface text-muted hover:text-ink transition-colors"
       title={permission === 'granted' ? 'Probar notificación' : 'Activar notificaciones'}
     >
       <Icon name="bell" size={18} />
       {hasPending && (
-        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-danger animate-pulse" />
+        <span aria-hidden="true" className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-danger animate-pulse" />
       )}
     </button>
   );

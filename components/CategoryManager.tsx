@@ -33,7 +33,7 @@ export function CategoryManager() {
         
         <div className="flex items-center justify-between p-4 border-b border-line bg-surface-2/30">
           <h3 className="font-bold text-lg text-ink">Gestionar Categorías</h3>
-          <button onClick={() => setCategoryManagerOpen(false)} className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors">
+          <button type="button" onClick={() => setCategoryManagerOpen(false)} aria-label="Cerrar gestión de categorías" className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors">
             <Icon name="cancel" size={20} />
           </button>
         </div>
@@ -59,14 +59,14 @@ export function CategoryManager() {
 
               {editing === cat ? (
                 <div className="flex gap-1 shrink-0">
-                  <button onClick={saveEdit} className="p-1.5 text-accent hover:bg-accent-soft rounded-md"><Icon name="check" size={16}/></button>
-                  <button onClick={() => setEditing(null)} className="p-1.5 text-muted hover:bg-surface-3 rounded-md"><Icon name="cancel" size={16}/></button>
+                  <button type="button" onClick={saveEdit} aria-label={`Guardar categoría ${cat}`} className="p-1.5 text-accent hover:bg-accent-soft rounded-md"><Icon name="check" size={16}/></button>
+                  <button type="button" onClick={() => setEditing(null)} aria-label="Cancelar edición" className="p-1.5 text-muted hover:bg-surface-3 rounded-md"><Icon name="cancel" size={16}/></button>
                 </div>
               ) : (
                 <div className="flex gap-1 shrink-0">
-                  <button onClick={() => startEdit(cat)} className="p-1.5 text-muted hover:bg-surface-3 hover:text-ink rounded-md" title="Editar"><Icon name="edit" size={16}/></button>
+                  <button type="button" onClick={() => startEdit(cat)} className="p-1.5 text-muted hover:bg-surface-3 hover:text-ink rounded-md" title="Editar" aria-label={`Editar categoría ${cat}`}><Icon name="edit" size={16}/></button>
                   {cat !== 'Otros' && (
-                    <button onClick={() => { if (confirm(`¿Eliminar categoría "${cat}"? Los artículos pasarán a "Otros".`)) deleteCategory(cat); }} className="p-1.5 text-muted hover:bg-danger-soft hover:text-danger rounded-md" title="Eliminar"><Icon name="delete" size={16}/></button>
+                    <button type="button" onClick={() => { if (confirm(`¿Eliminar categoría "${cat}"? Los artículos pasarán a "Otros".`)) deleteCategory(cat); }} className="p-1.5 text-muted hover:bg-danger-soft hover:text-danger rounded-md" title="Eliminar" aria-label={`Eliminar categoría ${cat}`}><Icon name="delete" size={16}/></button>
                   )}
                 </div>
               )}
