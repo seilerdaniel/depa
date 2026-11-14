@@ -2,8 +2,9 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useData, useUI } from '@/state/AppProvider';
-import { normalizeLabel, normalizeMonth, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText, formatMonth } from '@/lib/utils';
+import { normalizeLabel, normalizeMonth, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText, formatMonth, createId } from '@/lib/utils';
 import { PRIORITY, CATEGORY_MAX_LENGTH, SUBCATEGORY_MAX_LENGTH } from '@/lib/config';
+import { persistImageToDisk, deleteDiskImage, isLocalImageRef, useResolvedImageSrc } from '@/lib/nativeImages';
 import type { Installments } from '@/lib/types';
 import { Icon } from './Icon';
 
@@ -36,6 +37,11 @@ export function ItemForm() {
   const [newCatErr, setNewCatErr] = useState('');
   const [photoStatus, setPhotoStatus] = useState('');
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Vista previa: puede ser un DataURL (recién elegida) o una foto ya
+  // guardada en disco (`local-img://`), que necesita resolverse por IPC.
+  const previewSrc = useResolvedImageSrc(form.photoData, form.imageUrl);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -98,8 +104,8 @@ export function ItemForm() {
 
   const cancelEdit = () => { setEditingItem(null); setForm(EMPTY); setErrors({}); setPhotoStatus(''); setActiveTab('basico'); };
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault(); if (photoBusy) return;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); if (photoBusy || submitting) return;
     const errs: Errors = {};
     const name = normalizeLabel(form.name, 60);
     if (!name) errs.name = 'Ingresá el nombre del artículo.';
@@ -157,10 +163,36 @@ export function ItemForm() {
       orderNumber: normalizeLabel(form.orderNumber, 50),
     };
 
-    if (editingItem) { updateItem({ ...editingItem, ...itemData }); setEditingItem(null); }
-    else { addItem(itemData); }
+    setSubmitting(true);
 
-    setForm(EMPTY); setErrors({}); setPhotoStatus(''); setActiveTab('basico'); nameRef.current?.focus();
+    try {
+      // La foto se escribe en disco ANTES de tocar el estado: SQLite debe
+      // guardar sólo `local-img://...`, nunca el Base64.
+      let imageData = form.photoData;
+
+      if (imageData.startsWith('data:image/')) {
+        imageData = await persistImageToDisk(imageData, editingItem?.id ?? createId());
+      }
+
+      // Si reemplazamos o quitamos una foto que vivía en disco, el archivo
+      // anterior queda huérfano: lo borramos sin bloquear el guardado.
+      if (
+        editingItem &&
+        isLocalImageRef(editingItem.imageData) &&
+        editingItem.imageData !== imageData
+      ) {
+        void deleteDiskImage(editingItem.imageData);
+      }
+
+      const finalData = { ...itemData, imageData };
+
+      if (editingItem) { updateItem({ ...editingItem, ...finalData }); setEditingItem(null); }
+      else { addItem(finalData); }
+
+      setForm(EMPTY); setErrors({}); setPhotoStatus(''); setActiveTab('basico'); nameRef.current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const createCat = () => {
@@ -425,9 +457,9 @@ export function ItemForm() {
                   </label>
                 </div>
               </div>
-              {form.photoData && (
+              {form.photoData && previewSrc && (
                 <div className="relative w-full h-24 rounded-xl overflow-hidden border border-line">
-                  <img src={form.photoData} alt="Previsualización" className="w-full h-full object-cover" />
+                  <img src={previewSrc} alt="Previsualización" className="w-full h-full object-cover" />
                   <button type="button" onClick={() => { update('photoData', ''); setPhotoStatus(''); }} aria-label="Quitar foto" className="absolute top-1 right-1 grid place-items-center w-6 h-6 rounded-full bg-black/80 text-white hover:bg-danger transition-colors"><Icon name="cancel" size={14} /></button>
                 </div>
               )}
@@ -450,9 +482,9 @@ export function ItemForm() {
         </div>
 
         <div className="p-4 border-t border-line bg-surface mt-auto">
-          <button type="submit" disabled={photoBusy} className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl bg-accent text-accent-on font-semibold hover:bg-accent-ink transition-colors disabled:opacity-60 shadow-sm">
+          <button type="submit" disabled={photoBusy || submitting} className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl bg-accent text-accent-on font-semibold hover:bg-accent-ink transition-colors disabled:opacity-60 shadow-sm">
             <Icon name={editingItem ? 'check' : 'add'} size={17} />
-            {editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a wishlist' : 'Agregar a la lista')}
+            {submitting ? 'Guardando…' : editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a wishlist' : 'Agregar a la lista')}
           </button>
         </div>
           </form>

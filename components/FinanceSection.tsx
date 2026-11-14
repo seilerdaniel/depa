@@ -56,10 +56,6 @@ const TX_META: Record<
   },
 };
 
-/**
- * Los `id` deben coincidir con las variables del design system. La cuenta
- * también acepta un hex crudo ('#22c55e'), igual que el resto de la app.
- */
 const COLOR_OPTIONS: { id: string; label: string; swatch: string }[] = [
   { id: 'accent', label: 'Verde', swatch: 'var(--accent)' },
   { id: 'low', label: 'Menta', swatch: 'var(--low)' },
@@ -79,7 +75,6 @@ const COLOR_VAR: Record<string, string> = {
 const accentColor = (color: string): string =>
   color.startsWith('#') ? color : (COLOR_VAR[color] ?? COLOR_VAR.accent);
 
-/** Categorías financieras que no viven en la lista de compras. */
 const FINANCE_CATEGORIES = [
   'Supermercado',
   'Alquiler',
@@ -112,23 +107,13 @@ const dateFormatter = new Intl.DateTimeFormat('es-AR', {
   year: 'numeric',
 });
 
-/** Cuántos movimientos se agregan por clic en "Mostrar más". */
 const PAGE_SIZE = 20;
 
-/** Clave 'YYYY-MM' de una fecha (local, igual que el resto de la app). */
 function monthKeyOf(timestamp: number): string {
   const date = new Date(timestamp);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
-// ==========================================
-// FECHAS: el input es local, no UTC
-// ==========================================
-/**
- * `new Date('2026-11-01')` parsea UTC: en Argentina cae el 31/10 a las 21:00 y
- * el movimiento termina contando en el mes anterior. Construimos la fecha a
- * mediodía local (también esquiva los saltos de DST).
- */
 function parseDateInput(value: string): number {
   const [year, month, day] = value.split('-').map(Number);
   if (!year || !month || !day) return Date.now();
@@ -141,7 +126,6 @@ function toDateInput(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-/** `parsePrice` no acepta negativos; los saldos de tarjeta sí pueden serlo. */
 function parseSignedAmount(raw: string): number {
   const trimmed = raw.trim();
   const negative = trimmed.startsWith('-');
@@ -155,9 +139,6 @@ function signedAmount(transaction: Transaction): string {
   return money(transaction.amount);
 }
 
-// ==========================================
-// HELPERS DE UI
-// ==========================================
 interface SelectFieldProps {
   id: string;
   value: string;
@@ -166,7 +147,6 @@ interface SelectFieldProps {
   children: ReactNode;
 }
 
-/** `globals.css` fuerza `select { appearance: none }`, así que el chevron es manual. */
 function SelectField({ id, value, onChange, disabled, children }: SelectFieldProps) {
   return (
     <div className="relative">
@@ -188,9 +168,6 @@ function SelectField({ id, value, onChange, disabled, children }: SelectFieldPro
   );
 }
 
-// ==========================================
-// COMPONENTE
-// ==========================================
 export function FinanceSection() {
   const { items, categories } = useData();
   const {
@@ -230,7 +207,7 @@ export function FinanceSection() {
   const [txLinkedItemId, setTxLinkedItemId] = useState('');
   const [txError, setTxError] = useState('');
 
-  // --- Edición inline de movimientos (sólo metadatos) ---
+  // --- Edición inline de movimientos ---
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState('');
   const [editNotes, setEditNotes] = useState('');
@@ -308,12 +285,10 @@ export function FinanceSection() {
     return [...months].sort((a, b) => b.localeCompare(a));
   }, [transactions]);
 
-  /** Historial filtrado: cuenta, tipo, mes y texto libre. */
   const filteredTransactions = useMemo(() => {
     const needle = foldText(txSearch.trim());
 
     return recentTransactions.filter((transaction) => {
-      // En transferencias la cuenta puede ser origen o destino.
       if (
         txFilterAccount !== 'todas' &&
         transaction.accountId !== txFilterAccount &&
@@ -337,7 +312,6 @@ export function FinanceSection() {
 
   const visibleTransactions = filteredTransactions.slice(0, visibleCount);
 
-  /** Compras en cuotas que siguen pesando este mes. */
   const activeInstallments = useMemo(() => {
     const result: { item: Item; status: InstallmentStatus }[] = [];
     for (const item of items) {
@@ -348,7 +322,6 @@ export function FinanceSection() {
     return result.sort((a, b) => a.item.name.localeCompare(b.item.name, 'es'));
   }, [items, monthKey]);
 
-  // Un gasto vinculado con fecha del mes en curso = cuota ya registrada.
   const paidThisMonth = useMemo(() => {
     const paid = new Set<string>();
     for (const transaction of transactions) {
@@ -358,25 +331,21 @@ export function FinanceSection() {
     return paid;
   }, [transactions, monthKey]);
 
-  // '' = aportar sin tocar ninguna cuenta.
   const contributionOriginId = contributionAccountId;
   const installmentOriginId = installmentAccountId || accounts[0]?.id || '';
 
-  // El borrado en cascada toca movimientos: pedimos un segundo clic.
   useEffect(() => {
     if (!confirmDeleteId) return;
     const timer = window.setTimeout(() => setConfirmDeleteId(null), 4000);
     return () => window.clearTimeout(timer);
   }, [confirmDeleteId]);
 
-  // Mismo criterio para borrar una meta: no se destruye con un solo clic.
   useEffect(() => {
     if (!confirmGoalDeleteId) return;
     const timer = window.setTimeout(() => setConfirmGoalDeleteId(null), 4000);
     return () => window.clearTimeout(timer);
   }, [confirmGoalDeleteId]);
 
-  // Cambiar cualquier filtro reinicia la paginación y cierra la edición abierta.
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
     setEditingTxId(null);
@@ -390,6 +359,14 @@ export function FinanceSection() {
   const originId = txAccountId || accounts[0]?.id || '';
   const isTransfer = txType === 'transferencia';
   const isExpense = txType === 'gasto';
+
+  const focusMovementForm = () => {
+    const form = document.getElementById('finance-movement-form');
+    form?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      document.getElementById('tx-amount')?.focus();
+    }, 150);
+  };
 
   // ==========================================
   // FORMULARIO DE CUENTA
@@ -656,7 +633,6 @@ export function FinanceSection() {
       return;
     }
 
-    // El retiro viaja como negativo: el reducer decide el signo del movimiento.
     const signed = contributionMode === 'retiro' ? -amount : amount;
     const done = contributeToGoal(
       contributingGoalId,
@@ -722,7 +698,6 @@ export function FinanceSection() {
   const payInstallment = (item: Item, status: InstallmentStatus) => {
     if (!installmentOriginId) return;
 
-    // Los artículos legados no tienen `startMonth`: no inventamos "Cuota 0".
     const label = formatInstallmentProgress(status);
 
     addTransaction({
@@ -738,7 +713,7 @@ export function FinanceSection() {
   };
 
   return (
-    <section aria-labelledby="finance-section-heading" className="mt-4 grid gap-4">
+    <section aria-labelledby="finance-section-heading" className="mt-4 grid gap-5">
       {/* ==========================================
           CUENTAS Y BILLETERAS
       ========================================== */}
@@ -763,7 +738,7 @@ export function FinanceSection() {
           <button
             type="button"
             onClick={isAccountFormOpen ? closeAccountForm : openCreateAccount}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-ink px-3.5 text-xs font-bold text-surface transition-opacity hover:opacity-90"
+            className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-ink px-4 text-xs font-bold text-surface transition-opacity hover:opacity-90"
           >
             <Icon name={isAccountFormOpen ? 'cancel' : 'add'} size={14} />
             {isAccountFormOpen ? 'Cerrar' : 'Nueva cuenta'}
@@ -888,17 +863,17 @@ export function FinanceSection() {
               </p>
             )}
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
               <button
                 type="button"
                 onClick={closeAccountForm}
-                className="min-h-[40px] rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                className="min-h-[42px] rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on transition-colors hover:bg-accent-ink"
+                className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-accent px-5 text-sm font-bold text-accent-on shadow-sm transition-colors hover:bg-accent-ink"
               >
                 <Icon name="check" size={16} />
                 {editingAccountId ? 'Guardar cambios' : 'Crear cuenta'}
@@ -1023,7 +998,7 @@ export function FinanceSection() {
           <button
             type="button"
             onClick={toggleGoalForm}
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-ink px-3.5 text-xs font-bold text-surface transition-opacity hover:opacity-90"
+            className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-ink px-4 text-xs font-bold text-surface transition-opacity hover:opacity-90"
           >
             <Icon name={isGoalFormOpen ? 'cancel' : 'plus'} size={14} />
             {isGoalFormOpen ? 'Cerrar' : 'Nueva meta'}
@@ -1138,20 +1113,20 @@ export function FinanceSection() {
               </p>
             )}
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
               <button
                 type="button"
                 onClick={() => {
                   setGoalFormOpen(false);
                   resetGoalForm();
                 }}
-                className="min-h-[40px] rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                className="min-h-[42px] rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on transition-colors hover:bg-accent-ink"
+                className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-accent px-5 text-sm font-bold text-accent-on shadow-sm transition-colors hover:bg-accent-ink"
               >
                 <Icon name="check" size={16} />
                 {editingGoalId ? 'Guardar cambios' : 'Crear meta'}
@@ -1441,7 +1416,7 @@ export function FinanceSection() {
                     type="button"
                     onClick={() => payInstallment(item, status)}
                     disabled={!installmentOriginId || paid}
-                    className="mt-3 inline-flex min-h-[36px] w-full items-center justify-center gap-1.5 rounded-xl bg-accent px-3 text-xs font-bold text-accent-on transition-colors hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-40"
+                    className="mt-3 inline-flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-xl bg-accent px-3 text-xs font-bold text-accent-on transition-colors hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Icon name={paid ? 'check' : 'wallet'} size={13} />
                     {paid ? 'Cuota registrada este mes' : 'Pagar cuota'}
@@ -1463,20 +1438,33 @@ export function FinanceSection() {
           MOVIMIENTOS
       ========================================== */}
       <div className="rounded-3xl border border-line bg-surface p-5 shadow-soft">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-bold text-ink">Movimientos</h2>
-            <p className="mt-1 text-xs text-muted">
+            <h2 className="text-base font-bold text-ink">Movimientos</h2>
+            <p className="mt-0.5 text-xs text-muted">
               Ingresos, gastos y transferencias. Las transferencias mueven las dos cuentas.
             </p>
           </div>
-          <p className="text-xs text-muted">
-            Mostrando{' '}
-            <span className="font-bold tabular-nums text-ink">
-              {filteredTransactions.length}
-            </span>{' '}
-            de <span className="font-bold tabular-nums text-ink">{transactions.length}</span>
-          </p>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-muted">
+              Mostrando{' '}
+              <span className="font-bold tabular-nums text-ink">
+                {filteredTransactions.length}
+              </span>{' '}
+              de <span className="font-bold tabular-nums text-ink">{transactions.length}</span>
+            </p>
+
+            <button
+              type="button"
+              onClick={focusMovementForm}
+              disabled={!hasAccounts}
+              className="inline-flex min-h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="plus" size={16} />
+              Nuevo movimiento
+            </button>
+          </div>
         </div>
 
         {!hasAccounts && (
@@ -1491,7 +1479,7 @@ export function FinanceSection() {
         <form
           id="finance-movement-form"
           onSubmit={handleTransactionSubmit}
-          className="mt-4 grid gap-4 rounded-2xl border border-line bg-surface-2/60 p-4"
+          className="mt-4 grid gap-4 rounded-2xl border border-line bg-surface-2/60 p-4 sm:p-5"
         >
           <div className="grid gap-1.5">
             <span className={LABEL_CLASS}>Tipo de movimiento</span>
@@ -1708,20 +1696,20 @@ export function FinanceSection() {
             </p>
           )}
 
-          <div className="flex items-center justify-end gap-2">
+          <div className="mt-1 flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4">
             <button
               type="button"
               onClick={resetTransactionForm}
-              className="min-h-[40px] rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+              className="min-h-[44px] cursor-pointer rounded-xl px-4 text-sm font-semibold text-muted transition-colors hover:bg-surface-3 hover:text-ink"
             >
               Limpiar
             </button>
             <button
               type="submit"
               disabled={!hasAccounts}
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on transition-colors hover:bg-accent-ink disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex min-h-[46px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-6 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
             >
-              <Icon name="check" size={16} />
+              <Icon name="check" size={17} />
               Registrar movimiento
             </button>
           </div>
@@ -1829,7 +1817,6 @@ export function FinanceSection() {
                       <form
                         onSubmit={(event) => handleTransactionEditSubmit(event, transaction)}
                         onKeyDown={(event) => {
-                          // Escape cierra la edición sin navegar a Inicio.
                           if (event.key === 'Escape') {
                             event.stopPropagation();
                             cancelTransactionEdit();

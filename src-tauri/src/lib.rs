@@ -74,6 +74,9 @@ fn migrations() -> Vec<Migration> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    // Sistema de archivos: necesario para guardar las fotos en
+    // `%LOCALAPPDATA%/<app>/images/` en lugar de inflar SQLite con Base64.
+    .plugin(tauri_plugin_fs::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

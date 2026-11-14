@@ -6,6 +6,13 @@
         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
     </symbol>
 
+    <!-- Casa / Mi Hogar -->
+    <symbol id="icon-home" viewBox="0 0 24 24">
+      <path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1Z"
+        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round" />
+    </symbol>
+
     <!-- Candado / 100% local -->
     <symbol id="icon-local" viewBox="0 0 24 24">
       <rect x="4" y="10" width="16" height="11" rx="2" fill="none" stroke="currentColor"

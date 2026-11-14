@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useData, usePurchasePayment, useUI } from '@/state/AppProvider';
-import { money, getItemImage, formatMonth, getInstallmentStatus, formatInstallmentProgress, currentMonthKey } from '@/lib/utils';
+import { money, formatMonth, getInstallmentStatus, formatInstallmentProgress, currentMonthKey } from '@/lib/utils';
+import { useResolvedImageSrc } from '@/lib/nativeImages';
 import { PRIORITY } from '@/lib/config';
 import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
@@ -32,7 +33,7 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const src = getItemImage(item);
+  const src = useResolvedImageSrc(item.imageData, item.imageUrl);
   const identity = [item.brand, item.model, item.color].filter(Boolean).join(' · ');
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const showImage = src.length > 0 && failedSrc !== src;

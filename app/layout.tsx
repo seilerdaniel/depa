@@ -45,10 +45,9 @@ export default function RootLayout({
             __html: `
               try {
                 const theme = localStorage.getItem('depa.theme');
-                const isDark = theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const isDark = theme === 'dark' || ((theme === 'system' || !theme) && prefersDark);
                 document.documentElement.classList.toggle('dark', isDark);
-                // Los controles nativos (select, date, scrollbars) se pintan
-                // desde el primer frame, sin destellos blancos.
                 document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
               } catch (_) {}
             `,

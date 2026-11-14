@@ -3,9 +3,10 @@
 import { memo, useMemo, useState } from 'react';
 import { useData, usePurchasePayment, useUI } from '@/state/AppProvider';
 import {
-  money, formatDimensions, formatInstallments, getItemImage, formatMonth,
+  money, formatDimensions, formatInstallments, formatMonth,
   getInstallmentStatus, formatInstallmentProgress, currentMonthKey,
 } from '@/lib/utils';
+import { useResolvedImageSrc } from '@/lib/nativeImages';
 import { PRIORITY } from '@/lib/config';
 import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
@@ -41,7 +42,7 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
   const tone = PRIO_TONES[item.priority];
-  const src = getItemImage(item);
+  const src = useResolvedImageSrc(item.imageData, item.imageUrl);
   const showImage = src.length > 0 && failedSrc !== src;
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);

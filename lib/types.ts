@@ -3,6 +3,7 @@ export type StatusFilter = 'todos' | 'pendientes' | 'comprados';
 export type SortMode = 'prioridad' | 'precio-desc' | 'precio-asc' | 'nombre' | 'manual';
 export type View = 'home' | 'list' | 'wishlist' | 'moodboard' | 'dashboard' | 'finance' | 'history' | 'settings';
 export type ViewMode = 'grid' | 'table' | 'list';
+export type StartView = 'home' | 'list' | 'finance';
 
 export interface Dimensions {
   height: number | null;
@@ -57,6 +58,28 @@ export interface Prefs {
   wishlistSubcategory: string;
   viewMode: ViewMode;
   search: string;
+  homeLayout: HomeLayout;
+  homeCards: Record<HomeModuleId, HomeCardConfig>;
+  startView: StartView;
+}
+
+// ==========================================
+// INICIO PERSONALIZABLE
+// ==========================================
+export type HomeLayout = 'cards-lg' | 'cards-sm' | 'list';
+
+/** Módulos del Inicio. Los cuatro últimos todavía no tienen pantalla. */
+export type HomeModuleId = 'finanzas' | 'compras' | 'hogar' | 'notas' | 'tareas' | 'habitos';
+
+export type CardSurfaceStyle = 'default' | 'bordered' | 'tinted' | 'minimal';
+
+export type CardAccentColor = 'accent' | 'high' | 'medium' | 'low' | 'urgent' | 'neutral';
+
+export interface HomeCardConfig {
+  visible: boolean;
+  icon: string;
+  color: CardAccentColor;
+  surface: CardSurfaceStyle;
 }
 
 // ==========================================

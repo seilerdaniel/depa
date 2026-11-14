@@ -1,9 +1,7 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
-/* Tailwind CSS v4 processes @theme; suppress Stylelint's generic CSS warning. */
-/* stylelint-disable at-rule-no-unknown */
 @theme {
-  /* ... (tus variables @theme actuales se mantienen) ... */
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -27,53 +25,50 @@
   --color-medium-soft: var(--medium-soft);
   --color-low: var(--low);
   --color-low-soft: var(--low-soft);
-
-  /* Sombra del sistema: `--shadow` vive en :root y cambia con el tema. */
+  --font-sans: var(--font-sans);
   --shadow-soft: var(--shadow);
+  --shadow-ring: var(--ring);
 }
-/* stylelint-enable at-rule-no-unknown */
 
 :root {
-  /* El modo lo decide la clase `.dark` de <html>, no Windows. */
   color-scheme: light;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
   /* Modo Claro */
   --bg: #f6f4ef;
-  --bg-glow: rgba(31,92,69,.1);
-  --surface: #fffdfa; 
-  --surface-2: #f1eee6; 
+  --bg-glow: rgba(31, 92, 69, 0.1);
+  --surface: #fffdfa;
+  --surface-2: #f1eee6;
   --surface-3: #e8e3d9;
-  --ink: #1f1e1a; 
-  --ink-soft: #423e36; 
+  --ink: #1f1e1a;
+  --ink-soft: #423e36;
   --muted: #6f695e;
-  --line: #e5e0d5; 
+  --line: #e5e0d5;
   --line-strong: #d3ccbe;
-  --accent: #1f5c45; 
-  --accent-ink: #174936; 
-  --accent-soft: #e2efe8; 
-  --on-accent: #fff;
-  --danger: #b3261e; 
+  --accent: #1f5c45;
+  --accent-ink: #174936;
+  --accent-soft: #e2efe8;
+  --on-accent: #ffffff;
+  --danger: #b3261e;
   --danger-soft: #fbe8e5;
-  --urgent: #b3261e; 
+  --urgent: #b3261e;
   --urgent-soft: #fbe7e4;
-  --high: #c44900; 
+  --high: #c44900;
   --high-soft: #fce8dc;
-  --medium: #8a5a00; 
+  --medium: #8a5a00;
   --medium-soft: #fdf0d5;
-  --low: #226b45; 
+  --low: #226b45;
   --low-soft: #e3f2e9;
-  --shadow: 0 1px 2px rgba(31,30,26,.04), 0 10px 28px -16px rgba(31,30,26,.25);
-  --ring: 0 0 0 3px rgba(31,92,69,.22);
+  --shadow: 0 1px 2px rgba(31, 30, 26, 0.04), 0 10px 28px -16px rgba(31, 30, 26, 0.25);
+  --ring: 0 0 0 3px rgba(31, 92, 69, 0.22);
 }
 
-/* El tema oscuro se activa SÓLO con la clase que aplica AppProvider.
-   Antes vivía en `@media (prefers-color-scheme: dark)`, así que un Windows
-   en modo oscuro pisaba la elección del usuario. */
 .dark {
   color-scheme: dark;
-  /* Modo Oscuro Optimizado (Más contraste) */
+
+  /* Modo Oscuro */
   --bg: #0a0a09;
-  --bg-glow: rgba(126,207,168,.05);
+  --bg-glow: rgba(126, 207, 168, 0.05);
   --surface: #161513;
   --surface-2: #1f1e1b;
   --surface-3: #2a2823;
@@ -84,23 +79,26 @@
   --line-strong: #423e36;
   --accent: #8ce6bb;
   --accent-ink: #b3f5d2;
-  --accent-soft: rgba(140,230,187,.12);
+  --accent-soft: rgba(140, 230, 187, 0.12);
   --on-accent: #0a1c14;
   --danger: #ff8a7a;
-  --danger-soft: rgba(255,122,104,.14);
+  --danger-soft: rgba(255, 122, 104, 0.14);
   --urgent: #ff8a7a;
-  --urgent-soft: rgba(255,122,104,.14);
+  --urgent-soft: rgba(255, 122, 104, 0.14);
   --high: #ff9d5c;
-  --high-soft: rgba(255,157,92,.14);
+  --high-soft: rgba(255, 157, 92, 0.14);
   --medium: #f0b64b;
-  --medium-soft: rgba(240,182,75,.14);
+  --medium-soft: rgba(240, 182, 75, 0.14);
   --low: #79d3a4;
-  --low-soft: rgba(121,211,164,.14);
-  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -18px rgba(0,0,0,.8);
-  --ring: 0 0 0 3px rgba(140,230,187,.28);
+  --low-soft: rgba(121, 211, 164, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.8);
+  --ring: 0 0 0 3px rgba(140, 230, 187, 0.28);
 }
 
-html { -webkit-text-size-adjust: 100%; }
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   min-height: 100dvh;
   margin: 0;
@@ -109,21 +107,36 @@ body {
   background: radial-gradient(900px 420px at 88% -12%, var(--bg-glow), transparent 68%), var(--bg);
   -webkit-font-smoothing: antialiased;
 }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-select { appearance: none; -webkit-appearance: none; -moz-appearance: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
-/* El ícono nativo del calendario ya se adapta con `color-scheme`. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+/* Ícono nativo del calendario adaptado a claro/oscuro */
+.dark input[type="month"]::-webkit-calendar-picker-indicator,
+.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
 input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="date"]::-webkit-calendar-picker-indicator {
-  opacity: 0.65;
+  opacity: 0.55;
   cursor: pointer;
   transition: opacity 0.2s;
 }
+
 input[type="month"]::-webkit-calendar-picker-indicator:hover,
 input[type="date"]::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
 }
+
 input[type="month"]:focus,
 input[type="date"]:focus {
   outline: none;

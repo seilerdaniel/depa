@@ -2,8 +2,65 @@
 
 import { useState, useMemo } from 'react';
 import { useData, useUI } from '@/state/AppProvider';
-import { getItemImage, money } from '@/lib/utils';
+import { money } from '@/lib/utils';
+import { useResolvedImageSrc } from '@/lib/nativeImages';
+import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
+
+interface MoodboardTileProps {
+  item: Item;
+  failed: boolean;
+  onFail: () => void;
+  onOpen: () => void;
+}
+
+function MoodboardTile({ item, failed, onFail, onOpen }: MoodboardTileProps) {
+  const src = useResolvedImageSrc(item.imageData, item.imageUrl);
+  const showImage = !failed && src.length > 0;
+
+  return (
+    <figure 
+      onClick={onOpen}
+      className="group relative m-0 aspect-square overflow-hidden border border-line rounded-2xl bg-surface-2 cursor-pointer shadow-sm hover:shadow-md transition-all duration-300"
+    >
+      {showImage ? (
+        <img
+          src={src}
+          alt={item.name}
+          loading="lazy"
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+          onError={onFail}
+        />
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-3 text-center">
+          <Icon name="photo" size={26} className="text-muted opacity-40" />
+          <span
+            className="max-w-full truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted"
+            title={item.category}
+          >
+            {item.category}
+          </span>
+        </div>
+      )}
+      
+      {/* Overlay de Información */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+        <span className="text-xs font-bold text-white/80 uppercase tracking-wider mb-1">
+          {item.wishlist ? 'Wishlist' : 'En Lista'}
+        </span>
+        <h3 className="text-sm font-bold text-white leading-tight line-clamp-2">
+          {item.name}
+        </h3>
+        <p className="text-sm font-semibold text-accent-soft mt-1">
+          {money(item.price)}
+        </p>
+        <div className="mt-2 flex items-center gap-1 text-[0.65rem] font-bold text-white/90 bg-white/20 w-fit px-2 py-0.5 rounded-md backdrop-blur-sm">
+          Ver detalles <Icon name="chevron" size={12} className="-rotate-90" />
+        </div>
+      </div>
+    </figure>
+  );
+}
 
 export function Moodboard() {
   const { items } = useData();
@@ -16,7 +73,7 @@ export function Moodboard() {
 
   const withImage = useMemo(() => {
     return items.filter(i => {
-      if (!getItemImage(i)) return false;
+      if (!(i.imageData || i.imageUrl)) return false;
       if (filter === 'lista') return !i.wishlist;
       if (filter === 'wishlist') return i.wishlist;
       return true;
@@ -54,47 +111,13 @@ export function Moodboard() {
       {withImage.length > 0 ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {withImage.map((it) => (
-            <figure 
-              key={it.id} 
-              onClick={() => setSelectedItem(it)}
-              className="group relative m-0 aspect-square overflow-hidden border border-line rounded-2xl bg-surface-2 cursor-pointer shadow-sm hover:shadow-md transition-all duration-300"
-            >
-              {failedIds.includes(it.id) ? (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-3 text-center">
-                  <Icon name="photo" size={26} className="text-muted opacity-40" />
-                  <span
-                    className="max-w-full truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted"
-                    title={it.category}
-                  >
-                    {it.category}
-                  </span>
-                </div>
-              ) : (
-                <img
-                  src={getItemImage(it)}
-                  alt={it.name}
-                  loading="lazy"
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                  onError={() => markFailed(it.id)}
-                />
-              )}
-              
-              {/* Overlay de Información */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                <span className="text-xs font-bold text-white/80 uppercase tracking-wider mb-1">
-                  {it.wishlist ? 'Wishlist' : 'En Lista'}
-                </span>
-                <h3 className="text-sm font-bold text-white leading-tight line-clamp-2">
-                  {it.name}
-                </h3>
-                <p className="text-sm font-semibold text-accent-soft mt-1">
-                  {money(it.price)}
-                </p>
-                <div className="mt-2 flex items-center gap-1 text-[0.65rem] font-bold text-white/90 bg-white/20 w-fit px-2 py-0.5 rounded-md backdrop-blur-sm">
-                  Ver detalles <Icon name="chevron" size={12} className="-rotate-90" />
-                </div>
-              </div>
-            </figure>
+            <MoodboardTile
+              key={it.id}
+              item={it}
+              failed={failedIds.includes(it.id)}
+              onFail={() => markFailed(it.id)}
+              onOpen={() => setSelectedItem(it)}
+            />
           ))}
         </div>
       ) : (

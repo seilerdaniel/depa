@@ -8,8 +8,20 @@ import {
   MAX_PHOTO_DATA_LENGTH,
   PHOTO_QUALITIES,
   MAX_UPLOAD_BYTES,
+  DEFAULT_PREFS,
+  SORT_MODES,
+  STATUS_FILTERS,
+  VIEW_MODES,
+  HOME_LAYOUTS,
+  HOME_MODULES,
+  HOME_ICONS,
+  CARD_COLORS,
+  CARD_SURFACES,
 } from './config';
-import type { Account, AccountType, Dimensions, Installments, Item, SavingsGoal, Transaction, TransactionType } from './types';
+import type {
+  Account, AccountType, CardAccentColor, CardSurfaceStyle, Dimensions, HomeCardConfig,
+  HomeModuleId, Installments, Item, Prefs, SavingsGoal, Transaction, TransactionType,
+} from './types';
 
 // ==========================================
 // FORMATEADORES
@@ -171,6 +183,19 @@ export function normalizeInstallments(raw: unknown): Installments | null {
   };
 }
 
+/** Referencia a una foto guardada en disco: `local-img://<archivo>`. */
+const LOCAL_IMAGE_REF = /^local-img:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
+
+/**
+ * Deja pasar sólo fotos conocidas: un DataURL válido o una referencia
+ * nuestra a disco. Cualquier otra cosa se descarta (evita rutas arbitrarias).
+ */
+export const normalizeImageData = (value: unknown): string => {
+  if (typeof value !== 'string') return '';
+  if (/^data:image\//i.test(value)) return value;
+  return LOCAL_IMAGE_REF.test(value) ? value : '';
+};
+
 /**
  * Toma un objeto crudo (de localStorage) y lo convierte en un Item seguro y validado.
  */
@@ -197,7 +222,7 @@ export function normalizeItem(raw: unknown): Item | null {
     createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
     purchaseUrl: normalizeUrl(r.purchaseUrl) || '',
     imageUrl: normalizeUrl(r.imageUrl, true) || '',
-    imageData: typeof r.imageData === 'string' && /^data:image\//i.test(r.imageData) ? r.imageData : '',
+    imageData: normalizeImageData(r.imageData),
     storeName: normalizeLabel(r.storeName, 80),
     storeLocation: normalizeLabel(r.storeLocation, 120),
     dimensions: normalizeDimensions(r.dimensions),
@@ -325,10 +350,72 @@ export function normalizeSavingsGoal(raw: unknown): SavingsGoal | null {
 }
 
 // ==========================================
+// PREFS
+// ==========================================
+/**
+ * Devuelve el valor si pertenece al set permitido; si no, el fallback.
+ *
+ * `localStorage` y los backups son datos NO confiables: un `viewMode` o un
+ * `status` inventado dejaría la UI sin vista o con un filtro que no filtra.
+ */
+function pickEnum<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+  fallback: T,
+): T {
+  return typeof value === 'string' && allowed.has(value as T) ? (value as T) : fallback;
+}
+
+/**
+ * Valida la apariencia de los seis módulos del Inicio.
+ *
+ * Cada módulo se resuelve por separado y cae a SU default: un backup viejo
+ * (sin `homeCards`) o con un ícono inexistente no rompe la grilla.
+ */
+export function normalizeHomeCards(raw: unknown): Record<HomeModuleId, HomeCardConfig> {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const cards = {} as Record<HomeModuleId, HomeCardConfig>;
+
+  for (const module of HOME_MODULES) {
+    const rawCard = source[module.id];
+    const card = rawCard && typeof rawCard === 'object' ? (rawCard as Record<string, unknown>) : {};
+
+    cards[module.id] = {
+      visible: typeof card.visible === 'boolean' ? card.visible : module.defaultVisible,
+      icon: typeof card.icon === 'string' && HOME_ICONS.has(card.icon) ? card.icon : module.defaultIcon,
+      color: pickEnum<CardAccentColor>(card.color, CARD_COLORS, module.defaultColor),
+      surface: pickEnum<CardSurfaceStyle>(card.surface, CARD_SURFACES, module.defaultSurface),
+    };
+  }
+
+  return cards;
+}
+
+/**
+ * Sanea prefs de cualquier origen (localStorage o backup importado).
+ * `DEFAULT_PREFS` actúa de base, así un JSON viejo no deja campos en `undefined`.
+ */
+export function normalizePrefs(raw: unknown): Prefs {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_PREFS, homeCards: normalizeHomeCards(null) };
+
+  const prefs = raw as Record<string, unknown>;
+
+  return {
+    ...DEFAULT_PREFS,
+    ...prefs,
+    sort: pickEnum(prefs.sort, SORT_MODES, DEFAULT_PREFS.sort),
+    wishlistSort: pickEnum(prefs.wishlistSort, SORT_MODES, DEFAULT_PREFS.wishlistSort),
+    status: pickEnum(prefs.status, STATUS_FILTERS, DEFAULT_PREFS.status),
+    viewMode: pickEnum(prefs.viewMode, VIEW_MODES, DEFAULT_PREFS.viewMode),
+    homeLayout: pickEnum(prefs.homeLayout, HOME_LAYOUTS, DEFAULT_PREFS.homeLayout),
+    homeCards: normalizeHomeCards(prefs.homeCards),
+  };
+}
+
+// ==========================================
 // FORMATEADORES DE VISTA (UI)
 // ==========================================
 export const cleanFilterValue = (v: unknown) => normalizeLabel(v, CATEGORY_MAX_LENGTH) || 'todas';
-export const getItemImage = (item: Item) => item.imageData || item.imageUrl || '';
 
 export function formatDimensions(d?: Dimensions | null): string {
   if (!d) return '';

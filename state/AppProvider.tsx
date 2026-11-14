@@ -9,15 +9,18 @@ import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
   loadAccounts, saveAccounts, loadTransactions, saveTransactions,
-  loadSavingsGoals, saveSavingsGoals, normalizePrefs,
+  loadSavingsGoals, saveSavingsGoals,
 } from '@/lib/storage';
 import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
 import {
   createId, normalizeLabel, normalizeItem, normalizeAccount, normalizeTransaction,
   normalizeSavingsGoal, pruneTransactions, roundMoney, sameText, normalizeMonth,
-  currentMonthKey,
+  currentMonthKey, normalizePrefs,
 } from '@/lib/utils';
 import type { Account, Item, Prefs, SavingsGoal, Transaction, View } from '@/lib/types';
+import {
+  isTauri, isLocalImageRef, persistImageToDisk, readDiskImageAsDataUrl,
+} from '@/lib/nativeImages';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -487,6 +490,9 @@ export interface UIValue {
   setBuyPromptItemId: (id: string | null) => void;
   isCategoryManagerOpen: boolean;
   setCategoryManagerOpen: (open: boolean) => void;
+  /** Panel de configuración del Inicio (densidad y apariencia de las cards). */
+  isSettingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
   /** Formulario lateral de alta: colapsado libera ancho para la grilla. */
   itemFormOpen: boolean;
   setItemFormOpen: (open: boolean) => void;
@@ -575,6 +581,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [theme, setThemeState] = useState<Theme>('system');
   const [isCategoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  const [isSettingsOpen, setSettingsOpen] = useState(false);
   const [itemFormOpen, setItemFormOpen] = useState(true);
 
   const setTheme = useCallback<UIValue['setTheme']>((nextTheme) => {
@@ -674,10 +681,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
         saveCategories(categories).catch(console.error);
       }
 
+      // ==========================================
+      // MIGRACIÓN 4.1: Base64 heredado → archivo en disco
+      // ==========================================
+      // Los artículos viejos guardaban la foto entera en SQLite. Se escribe
+      // una vez en disco y se reemplaza el Base64 por `local-img://...`.
+      let loadedItems = items;
+
+      if (isTauri()) {
+        const migrated = await Promise.all(
+          items.map(async (item) => {
+            if (!item.imageData.startsWith('data:image/')) return item;
+
+            const stored = await persistImageToDisk(item.imageData, item.id);
+            return stored === item.imageData ? item : { ...item, imageData: stored };
+          }),
+        );
+
+        const changed = migrated.some((item, index) => item !== items[index]);
+
+        if (changed) {
+          loadedItems = migrated;
+          // Persistimos ya: el effect de guardado se salta la primera pasada
+          // para no reescribir todo lo que se acaba de leer.
+          saveItems(migrated).catch(console.error);
+        }
+      }
+
       dispatch({
         type: 'init',
         payload: {
-          items, categories, prefs, accounts, transactions, savingsGoals, view: 'home',
+          items: loadedItems,
+          categories,
+          prefs,
+          accounts,
+          transactions,
+          savingsGoals,
+          view: prefs.startView,
         },
       });
     }
@@ -1218,92 +1258,119 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR)
   // ==========================================
   const exportData = useCallback<DataValue['exportData']>(() => {
-    const snapshot = stateRef.current;
-    const data: BackupExportData = {
-      items: snapshot.items,
-      categories: snapshot.categories,
-      prefs: snapshot.prefs,
-      accounts: snapshot.accounts,
-      transactions: snapshot.transactions,
-      savingsGoals: snapshot.savingsGoals,
-      version: 3,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `depa-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Copia de seguridad descargada');
+    void (async () => {
+      const snapshot = stateRef.current;
+
+      // El backup tiene que ser portable: las fotos que viven en disco se
+      // embeben como Base64 SÓLO en el JSON exportado (la base no se toca).
+      const items = await Promise.all(
+        snapshot.items.map(async (item) => {
+          if (!isLocalImageRef(item.imageData)) return item;
+
+          const dataUrl = await readDiskImageAsDataUrl(item.imageData);
+          return dataUrl ? { ...item, imageData: dataUrl } : item;
+        }),
+      );
+
+      const data: BackupExportData = {
+        items,
+        categories: snapshot.categories,
+        prefs: snapshot.prefs,
+        accounts: snapshot.accounts,
+        transactions: snapshot.transactions,
+        savingsGoals: snapshot.savingsGoals,
+        version: 3,
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `depa-backup-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Copia de seguridad descargada');
+    })();
   }, [showToast]);
 
   const importData = useCallback<DataValue['importData']>((file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string;
-        const parsed = JSON.parse(content);
+      void (async () => {
+        try {
+          const content = e.target?.result as string;
+          const parsed = JSON.parse(content);
 
-        if (!parsed.items || !Array.isArray(parsed.items)) {
-          throw new Error('Formato de archivo inválido');
+          if (!parsed.items || !Array.isArray(parsed.items)) {
+            throw new Error('Formato de archivo inválido');
+          }
+
+          // BLINDAJE: Normalizamos cada artículo y filtramos los que sean inválidos
+          const validItems: Item[] = parsed.items
+            .map((raw: unknown) => normalizeItem(raw))
+            .filter((i: Item | null): i is Item => i !== null);
+
+          if (validItems.length === 0 && parsed.items.length > 0) {
+            throw new Error('El archivo no contiene artículos válidos.');
+          }
+
+          // Las fotos del backup vienen embebidas en Base64: se escriben a
+          // disco y el estado guarda sólo la referencia.
+          const importedItems = await Promise.all(
+            validItems.map(async (item) => {
+              if (!item.imageData.startsWith('data:image/')) return item;
+
+              const stored = await persistImageToDisk(item.imageData, item.id);
+              return stored === item.imageData ? item : { ...item, imageData: stored };
+            }),
+          );
+
+          // Backups v1 no traen finanzas: arrays vacíos como fallback.
+          const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
+          const validAccounts = rawAccounts
+            .map((raw: unknown) => normalizeAccount(raw))
+            .filter((a: Account | null): a is Account => a !== null);
+
+          const rawTransactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+          const validTransactions = pruneTransactions(
+            rawTransactions
+              .map((raw: unknown) => normalizeTransaction(raw))
+              .filter((t: Transaction | null): t is Transaction => t !== null),
+            validAccounts
+          );
+
+          // Backups v2 tampoco traen metas: array vacío, no se pierde nada.
+          const rawGoals = Array.isArray(parsed.savingsGoals) ? parsed.savingsGoals : [];
+          const validGoals = rawGoals
+            .map((raw: unknown) => normalizeSavingsGoal(raw))
+            .filter((g: SavingsGoal | null): g is SavingsGoal => g !== null);
+
+          dispatch({
+            type: 'init',
+            payload: {
+              items: importedItems,
+              categories: parsed.categories || DEFAULT_CATEGORIES,
+              // Un backup con `viewMode`/`status` inventado no debe romper la UI.
+              prefs: normalizePrefs(parsed.prefs),
+              accounts: validAccounts,
+              transactions: validTransactions,
+              savingsGoals: validGoals,
+              view: 'list',
+            },
+          });
+
+          showToast(
+            `Datos importados correctamente (${importedItems.length} artículos, ${validAccounts.length} cuentas, ${validGoals.length} metas)`
+          );
+          dispatch({ type: 'set-view', view: 'list' });
+        } catch (err: unknown) {
+          // FIX #3: `catch (err: any)` violaba useUnknownInCatchVariables.
+          // Tipamos como unknown y estrechamos con instanceof.
+          const message = err instanceof Error
+            ? err.message
+            : 'Error al leer el archivo. Asegúrate de que sea un backup válido.';
+          showToast(message);
         }
-
-        // BLINDAJE: Normalizamos cada artículo y filtramos los que sean inválidos
-        const validItems = parsed.items
-          .map((raw: unknown) => normalizeItem(raw))
-          .filter((i: Item | null): i is Item => i !== null);
-
-        if (validItems.length === 0 && parsed.items.length > 0) {
-          throw new Error('El archivo no contiene artículos válidos.');
-        }
-
-        // Backups v1 no traen finanzas: arrays vacíos como fallback.
-        const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
-        const validAccounts = rawAccounts
-          .map((raw: unknown) => normalizeAccount(raw))
-          .filter((a: Account | null): a is Account => a !== null);
-
-        const rawTransactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
-        const validTransactions = pruneTransactions(
-          rawTransactions
-            .map((raw: unknown) => normalizeTransaction(raw))
-            .filter((t: Transaction | null): t is Transaction => t !== null),
-          validAccounts
-        );
-
-        // Backups v2 tampoco traen metas: array vacío, no se pierde nada.
-        const rawGoals = Array.isArray(parsed.savingsGoals) ? parsed.savingsGoals : [];
-        const validGoals = rawGoals
-          .map((raw: unknown) => normalizeSavingsGoal(raw))
-          .filter((g: SavingsGoal | null): g is SavingsGoal => g !== null);
-
-        dispatch({
-          type: 'init',
-          payload: {
-            items: validItems,
-            categories: parsed.categories || DEFAULT_CATEGORIES,
-            // Un backup con `viewMode`/`status` inventado no debe romper la UI.
-            prefs: normalizePrefs(parsed.prefs),
-            accounts: validAccounts,
-            transactions: validTransactions,
-            savingsGoals: validGoals,
-            view: 'list',
-          },
-        });
-
-        showToast(
-          `Datos importados correctamente (${validItems.length} artículos, ${validAccounts.length} cuentas, ${validGoals.length} metas)`
-        );
-        dispatch({ type: 'set-view', view: 'list' });
-      } catch (err: unknown) {
-        // FIX #3: `catch (err: any)` violaba useUnknownInCatchVariables.
-        // Tipamos como unknown y estrechamos con instanceof.
-        const message = err instanceof Error
-          ? err.message
-          : 'Error al leer el archivo. Asegúrate de que sea un backup válido.';
-        showToast(message);
-      }
+      })();
     };
     reader.readAsText(file);
   }, [showToast]);
@@ -1362,6 +1429,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setBuyPromptItemId,
     isCategoryManagerOpen,
     setCategoryManagerOpen,
+    isSettingsOpen,
+    setSettingsOpen,
     itemFormOpen,
     setItemFormOpen,
     theme,
@@ -1370,6 +1439,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     state.view, state.editingItem, state.selectedItem, state.buyPromptItemId,
     setView, setEditingItem, setSelectedItem, setBuyPromptItemId,
     isCategoryManagerOpen,
+    isSettingsOpen,
     itemFormOpen,
     theme, setTheme,
   ]);

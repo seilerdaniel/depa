@@ -62,32 +62,8 @@ export function FinanceDashboard() {
   const accountName = (id: string | null | undefined): string =>
     id ? accountNames.get(id) ?? 'Cuenta eliminada' : 'Cuenta eliminada';
 
-  const startNewMovement = () => {
-    document
-      .getElementById('finance-movement-form')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
   return (
     <div className="animate-in fade-in duration-300">
-      <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-ink">Mis Finanzas</h2>
-          <p className="mt-1 text-sm text-muted">
-            Saldo consolidado, cuentas y movimientos guardados en SQLite.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={startNewMovement}
-          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on transition-colors hover:bg-accent-ink"
-        >
-          <Icon name="add" size={15} />
-          Nuevo movimiento
-        </button>
-      </header>
-
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <article className="rounded-3xl border border-line bg-surface p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">

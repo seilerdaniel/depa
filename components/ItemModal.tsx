@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePurchasePayment, useUI } from '@/state/AppProvider';
 import {
-  money, formatDimensions, formatInstallments, getItemImage, formatMonth,
+  money, formatDimensions, formatInstallments, formatMonth,
   getInstallmentStatus, formatInstallmentProgress, currentMonthKey,
 } from '@/lib/utils';
+import { useResolvedImageSrc } from '@/lib/nativeImages';
 import { PRIORITY } from '@/lib/config';
 import { Icon } from './Icon';
 
@@ -15,6 +16,9 @@ export function ItemModal() {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const { selectedItem, setSelectedItem } = useUI();
   const payment = usePurchasePayment(selectedItem ?? { id: '', bought: false });
+
+  // El resolver es un hook: debe ejecutarse antes del retorno temprano.
+  const src = useResolvedImageSrc(selectedItem?.imageData ?? '', selectedItem?.imageUrl ?? '');
 
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -45,7 +49,6 @@ export function ItemModal() {
   if (!selectedItem) return null;
 
   const item = selectedItem;
-  const src = getItemImage(item);
   const showImage = src.length > 0 && failedSrc !== src;
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);

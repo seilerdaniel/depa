@@ -12,17 +12,19 @@ import { Moodboard } from './Moodboard';
 import { Toast } from './Toast';
 import { ItemModal } from './ItemModal';
 import { CategoryManager } from './CategoryManager';
+import { SettingsModal } from './SettingsModal';
 import { BuyItemModal } from './BuyItemModal';
 import { ErrorBoundary } from './ErrorBoundary';
+import { Icon } from './Icon';
 
 // Los imports dinámicos van AFUERA del componente para evaluarse UNA sola vez.
 const Home = dynamic(() => import('./Home').then((mod) => mod.Home), {
-  loading: () => <p className="text-muted text-sm p-4 animate-pulse text-center">Cargando...</p>,
+  loading: () => <p className="p-4 text-center text-sm text-muted animate-pulse">Cargando...</p>,
   ssr: false,
 });
 
 const Dashboard = dynamic(() => import('./Dashboard').then((mod) => mod.Dashboard), {
-  loading: () => <p className="text-muted text-sm p-4 animate-pulse text-center">Cargando dashboard...</p>,
+  loading: () => <p className="p-4 text-center text-sm text-muted animate-pulse">Cargando dashboard...</p>,
   ssr: false,
 });
 
@@ -30,7 +32,7 @@ const Dashboard = dynamic(() => import('./Dashboard').then((mod) => mod.Dashboar
 const FinanceDashboard = dynamic(
   () => import('./FinanceDashboard').then((mod) => mod.FinanceDashboard),
   {
-    loading: () => <p className="text-muted text-sm p-4 animate-pulse text-center">Cargando finanzas...</p>,
+    loading: () => <p className="p-4 text-center text-sm text-muted animate-pulse">Cargando finanzas...</p>,
     ssr: false,
   },
 );
@@ -38,11 +40,51 @@ const FinanceDashboard = dynamic(
 // Un único dueño para las vistas que viven dentro de "Mis Compras".
 const PURCHASE_VIEWS: readonly View[] = ['list', 'wishlist', 'moodboard', 'dashboard', 'history'];
 
+function ModuleHeader({
+  title,
+  subtitle,
+  onBack,
+  action,
+}: {
+  title: string;
+  subtitle: string;
+  onBack: () => void;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-5">
+      <button
+        type="button"
+        onClick={onBack}
+        className="group mb-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg py-1 pr-2 text-xs font-semibold text-muted transition-colors hover:text-ink"
+      >
+        <Icon
+          name="chevron"
+          size={14}
+          className="rotate-90 transition-transform duration-200 group-hover:-translate-x-0.5"
+        />
+        <span>Volver al Inicio</span>
+      </button>
+
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-ink sm:text-[1.65rem]">
+            {title}
+          </h2>
+          <p className="mt-0.5 text-sm text-muted">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+    </div>
+  );
+}
+
 function Shell() {
   const { ready } = useData();
   const {
     view, setView, setEditingItem,
     selectedItem, buyPromptItemId, isCategoryManagerOpen, itemFormOpen,
+    isSettingsOpen,
   } = useUI();
 
   const isPurchaseView = PURCHASE_VIEWS.includes(view);
@@ -67,7 +109,6 @@ function Shell() {
     };
 
     const focusSearch = () => {
-      // Un solo buscador montado a la vez, así que el selector no es ambiguo.
       const selector = isPurchaseView
         ? '[data-search-target="items"]'
         : '[data-search-target="finance"]';
@@ -77,14 +118,10 @@ function Shell() {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      // Nunca robamos teclas mientras el usuario escribe: ahí "/" es una barra.
       if (isTyping(event.target)) return;
-
-      const modalOpen = Boolean(selectedItem || buyPromptItemId || isCategoryManagerOpen);
+      if (selectedItem || buyPromptItemId || isCategoryManagerOpen || isSettingsOpen) return;
 
       if (event.key === 'Escape' || (event.altKey && event.key === 'ArrowLeft')) {
-        // Los modales manejan su propio Escape; acá sólo navegamos.
-        if (modalOpen) return;
         if (view === 'home') return;
         event.preventDefault();
         setView('home');
@@ -105,23 +142,31 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     view, setView, isPurchaseView,
-    selectedItem, buyPromptItemId, isCategoryManagerOpen,
+    selectedItem, buyPromptItemId, isCategoryManagerOpen, isSettingsOpen,
   ]);
+
+  const jumpToNewMovement = () => {
+    const form = document.getElementById('finance-movement-form');
+    form?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      document.getElementById('tx-amount')?.focus();
+    }, 150);
+  };
 
   if (!ready) {
     return (
-      <div className="min-h-[100dvh] grid place-items-center bg-bg">
-        <p className="text-muted font-medium animate-pulse text-lg">Cargando Depa…</p>
+      <div className="grid min-h-[100dvh] place-items-center bg-bg">
+        <p className="animate-pulse text-lg font-medium text-muted">Cargando Depa…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col">
+    <div className="flex min-h-[100dvh] flex-col">
       <Header />
 
       <main
-        className="flex-1 mx-auto w-[min(1180px,100%-32px)] py-4 pb-10 outline-none focus:outline-none"
+        className="mx-auto w-[min(1180px,100%-32px)] flex-1 py-4 pb-10 outline-none focus:outline-none"
         id="contenido"
         tabIndex={-1}
         style={{ outline: 'none' }}
@@ -134,10 +179,16 @@ function Shell() {
 
         {isPurchaseView && (
           <ErrorBoundary key={view}>
+            <ModuleHeader
+              title="Mis Compras"
+              subtitle="Equipamiento, presupuestos, wishlist y seguimiento de cuotas."
+              onBack={() => setView('home')}
+            />
+
             <PurchasesPanel />
 
             <div
-              className={`grid gap-6 pt-6 items-start ${
+              className={`grid items-start gap-6 pt-6 ${
                 view === 'list' && !itemFormOpen
                   ? 'grid-cols-1'
                   : 'lg:grid-cols-[370px_minmax(0,1fr)]'
@@ -145,7 +196,7 @@ function Shell() {
             >
               {view === 'list' && (
                 <>
-                  <aside className="lg:sticky lg:top-4 min-w-0">
+                  <aside className="min-w-0 lg:sticky lg:top-4">
                     <ItemForm />
                   </aside>
                   <div className="min-w-0">
@@ -155,25 +206,25 @@ function Shell() {
               )}
 
               {view === 'wishlist' && (
-                <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <div className="min-w-0 animate-in fade-in duration-300 lg:col-span-2">
                   <ListView mode="wishlist" />
                 </div>
               )}
 
               {view === 'history' && (
-                <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <div className="min-w-0 animate-in fade-in duration-300 lg:col-span-2">
                   <ListView mode="history" />
                 </div>
               )}
 
               {view === 'moodboard' && (
-                <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <div className="min-w-0 animate-in fade-in duration-300 lg:col-span-2">
                   <Moodboard />
                 </div>
               )}
 
               {view === 'dashboard' && (
-                <div className="lg:col-span-2 min-w-0 animate-in fade-in duration-300">
+                <div className="min-w-0 animate-in fade-in duration-300 lg:col-span-2">
                   <Dashboard />
                 </div>
               )}
@@ -183,6 +234,21 @@ function Shell() {
 
         {view === 'finance' && (
           <ErrorBoundary key={view}>
+            <ModuleHeader
+              title="Mis Finanzas"
+              subtitle="Cuentas, billeteras, metas de ahorro y movimientos."
+              onBack={() => setView('home')}
+              action={
+                <button
+                  type="button"
+                  onClick={jumpToNewMovement}
+                  className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-5 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99]"
+                >
+                  <Icon name="plus" size={17} />
+                  Nuevo movimiento
+                </button>
+              }
+            />
             <FinanceDashboard />
           </ErrorBoundary>
         )}
@@ -191,6 +257,7 @@ function Shell() {
       <Toast />
       <ItemModal />
       <CategoryManager />
+      <SettingsModal />
       <BuyItemModal />
     </div>
   );
