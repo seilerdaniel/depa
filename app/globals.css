@@ -34,7 +34,8 @@
 /* stylelint-enable at-rule-no-unknown */
 
 :root {
-  color-scheme: light dark;
+  /* El modo lo decide la clase `.dark` de <html>, no Windows. */
+  color-scheme: light;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   /* Modo Claro */
   --bg: #f6f4ef;
@@ -65,36 +66,38 @@
   --ring: 0 0 0 3px rgba(31,92,69,.22);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Modo Oscuro Optimizado (Más contraste) */
-    --bg: #0a0a09;       
-    --bg-glow: rgba(126,207,168,.05);
-    --surface: #161513;  
-    --surface-2: #1f1e1b; 
-    --surface-3: #2a2823;
-    --ink: #f2efe8; 
-    --ink-soft: #d8d3c8; 
-    --muted: #9c9588;
-    --line: #2e2b26; 
-    --line-strong: #423e36;
-    --accent: #8ce6bb; 
-    --accent-ink: #b3f5d2; 
-    --accent-soft: rgba(140,230,187,.12); 
-    --on-accent: #0a1c14;
-    --danger: #ff8a7a; 
-    --danger-soft: rgba(255,122,104,.14);
-    --urgent: #ff8a7a; 
-    --urgent-soft: rgba(255,122,104,.14);
-    --high: #ff9d5c; 
-    --high-soft: rgba(255,157,92,.14);
-    --medium: #f0b64b; 
-    --medium-soft: rgba(240,182,75,.14);
-    --low: #79d3a4; 
-    --low-soft: rgba(121,211,164,.14);
-    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -18px rgba(0,0,0,.8);
-    --ring: 0 0 0 3px rgba(140,230,187,.28);
-  }
+/* El tema oscuro se activa SÓLO con la clase que aplica AppProvider.
+   Antes vivía en `@media (prefers-color-scheme: dark)`, así que un Windows
+   en modo oscuro pisaba la elección del usuario. */
+.dark {
+  color-scheme: dark;
+  /* Modo Oscuro Optimizado (Más contraste) */
+  --bg: #0a0a09;
+  --bg-glow: rgba(126,207,168,.05);
+  --surface: #161513;
+  --surface-2: #1f1e1b;
+  --surface-3: #2a2823;
+  --ink: #f2efe8;
+  --ink-soft: #d8d3c8;
+  --muted: #9c9588;
+  --line: #2e2b26;
+  --line-strong: #423e36;
+  --accent: #8ce6bb;
+  --accent-ink: #b3f5d2;
+  --accent-soft: rgba(140,230,187,.12);
+  --on-accent: #0a1c14;
+  --danger: #ff8a7a;
+  --danger-soft: rgba(255,122,104,.14);
+  --urgent: #ff8a7a;
+  --urgent-soft: rgba(255,122,104,.14);
+  --high: #ff9d5c;
+  --high-soft: rgba(255,157,92,.14);
+  --medium: #f0b64b;
+  --medium-soft: rgba(240,182,75,.14);
+  --low: #79d3a4;
+  --low-soft: rgba(121,211,164,.14);
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 30px -18px rgba(0,0,0,.8);
+  --ring: 0 0 0 3px rgba(140,230,187,.28);
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -110,11 +113,10 @@ body {
 
 select { appearance: none; -webkit-appearance: none; -moz-appearance: none; }
 
-/* Arreglar el ícono nativo del calendario */
+/* El ícono nativo del calendario ya se adapta con `color-scheme`. */
 input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(1);
-  opacity: 0.5;
+  opacity: 0.65;
   cursor: pointer;
   transition: opacity 0.2s;
 }

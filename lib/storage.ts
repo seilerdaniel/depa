@@ -1,15 +1,50 @@
 import { getDb } from './sqlite';
-import { STORAGE_KEYS, DEFAULT_PREFS } from './config';
+import { STORAGE_KEYS, DEFAULT_PREFS, SORT_MODES, STATUS_FILTERS, VIEW_MODES } from './config';
 import { normalizeItem, normalizeAccount, normalizeTransaction, normalizeSavingsGoal } from './utils';
 import type { Account, Item, Prefs, SavingsGoal, Transaction } from './types';
 
 // ==========================================
 // PREFS (localStorage)
 // ==========================================
+/**
+ * Devuelve el valor si pertenece al set permitido; si no, el fallback.
+ *
+ * `localStorage` y los backups son datos NO confiables: un `viewMode` o un
+ * `status` inventado dejaría la UI sin vista o con un filtro que no filtra.
+ */
+function pickEnum<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+  fallback: T,
+): T {
+  return typeof value === 'string' && allowed.has(value as T) ? (value as T) : fallback;
+}
+
+/**
+ * Sanea prefs de cualquier origen (localStorage o backup importado).
+ * `DEFAULT_PREFS` actúa de base, así un JSON viejo no deja campos en `undefined`.
+ */
+export function normalizePrefs(raw: unknown): Prefs {
+  if (!raw || typeof raw !== 'object') return DEFAULT_PREFS;
+
+  const prefs = raw as Record<string, unknown>;
+
+  return {
+    ...DEFAULT_PREFS,
+    ...prefs,
+    sort: pickEnum(prefs.sort, SORT_MODES, DEFAULT_PREFS.sort),
+    wishlistSort: pickEnum(prefs.wishlistSort, SORT_MODES, DEFAULT_PREFS.wishlistSort),
+    status: pickEnum(prefs.status, STATUS_FILTERS, DEFAULT_PREFS.status),
+    viewMode: pickEnum(prefs.viewMode, VIEW_MODES, DEFAULT_PREFS.viewMode),
+  };
+}
+
 export function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.prefs);
-    return raw ? { ...DEFAULT_PREFS, ...JSON.parse(raw) } : DEFAULT_PREFS;
+    if (!raw) return DEFAULT_PREFS;
+
+    return normalizePrefs(JSON.parse(raw));
   } catch {
     return DEFAULT_PREFS;
   }

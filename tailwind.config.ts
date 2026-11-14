@@ -2,7 +2,8 @@ import type { Config } from 'tailwindcss';
 
 export default {
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
-  darkMode: 'media',
+  // El tema lo manda la clase `.dark` de <html>, no el sistema operativo.
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {

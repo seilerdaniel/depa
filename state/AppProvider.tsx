@@ -9,7 +9,7 @@ import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
   loadAccounts, saveAccounts, loadTransactions, saveTransactions,
-  loadSavingsGoals, saveSavingsGoals,
+  loadSavingsGoals, saveSavingsGoals, normalizePrefs,
 } from '@/lib/storage';
 import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
 import {
@@ -698,20 +698,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Guardamos todo de forma concurrente pero en un solo Promise
-    // para evitar que SQLite se bloquee al intentar dos escrituras a la vez.
-    Promise.all([
-      saveItems(state.items),
-      saveCategories(state.categories),
-      saveAccounts(state.accounts),
-      saveTransactions(state.transactions),
-      saveSavingsGoals(state.savingsGoals),
-    ]).then((results) => {
-      const hasError = results.some(r => r && !r.success);
-      if (hasError) {
-        console.error('🔥 Error guardando en SQLite. Revisa las transacciones.');
+    // El orden importa: primero las entidades "padre" (artículos, categorías,
+    // cuentas y metas) y recién después las transacciones. Si un import de
+    // backup insertara un movimiento antes que su cuenta, SQLite lo rechazaría
+    // por Foreign Key y el backup quedaría a medias.
+    void (async () => {
+      try {
+        const parents = await Promise.all([
+          saveItems(state.items),
+          saveCategories(state.categories),
+          saveAccounts(state.accounts),
+          saveSavingsGoals(state.savingsGoals),
+        ]);
+
+        const txRes = await saveTransactions(state.transactions);
+
+        const hasError = [...parents, txRes].some((r) => r && !r.success);
+        if (hasError) {
+          console.error('🔥 Error guardando en SQLite. Revisa las transacciones.');
+        }
+      } catch (error) {
+        console.error('🔥 Error inesperado guardando en SQLite.', error);
       }
-    }).catch(console.error);
+    })();
 
   }, [state.items, state.categories, state.accounts, state.transactions, state.savingsGoals, state.ready]);
 
@@ -1274,7 +1283,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           payload: {
             items: validItems,
             categories: parsed.categories || DEFAULT_CATEGORIES,
-            prefs: parsed.prefs || DEFAULT_PREFS,
+            // Un backup con `viewMode`/`status` inventado no debe romper la UI.
+            prefs: normalizePrefs(parsed.prefs),
             accounts: validAccounts,
             transactions: validTransactions,
             savingsGoals: validGoals,
