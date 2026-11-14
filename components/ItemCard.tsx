@@ -1,8 +1,11 @@
 'use client';
 
-import { memo } from 'react';
-import { useData, useUI } from '@/state/AppProvider';
-import { money, formatDimensions, formatInstallments, getItemImage, formatMonth } from '@/lib/utils';
+import { memo, useMemo, useState } from 'react';
+import { useData, usePurchasePayment, useUI } from '@/state/AppProvider';
+import {
+  money, formatDimensions, formatInstallments, getItemImage, formatMonth,
+  getInstallmentStatus, formatInstallmentProgress, currentMonthKey,
+} from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
@@ -18,6 +21,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 const PRIO_TONES: Record<Item['priority'], { border: string; badge: string }> = {
   urgente: { border: 'border-t-urgent', badge: 'bg-urgent-soft text-urgent border border-urgent/20' },
+  alta: { border: 'border-t-high', badge: 'bg-high-soft text-high border border-high/20' },
   media: { border: 'border-t-medium', badge: 'bg-medium-soft text-medium border border-medium/20' },
   baja: { border: 'border-t-low', badge: 'bg-low-soft text-low border border-low/20' },
 };
@@ -30,13 +34,25 @@ interface ItemCardProps {
 function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
   const { removeItem, toggleBought, setWishlist } = useData();
   const { setView, setEditingItem, setSelectedItem } = useUI();
+  const payment = usePurchasePayment(item);
+
+  // Guardamos qué src falló, no un booleano: si el usuario edita la imagen, la
+  // tarjeta vuelve a intentar cargarla sin remontarse.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
   const tone = PRIO_TONES[item.priority];
   const src = getItemImage(item);
+  const showImage = src.length > 0 && failedSrc !== src;
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);
   const catIcon = CATEGORY_ICONS[item.category] || 'list';
-  const identity = [item.brand, item.color].filter(Boolean).join(' · ');
+  const identity = [item.brand, item.model, item.color].filter(Boolean).join(' · ');
+
+  const installmentStatus = useMemo(
+    () => getInstallmentStatus(item.installments, currentMonthKey()),
+    [item.installments],
+  );
+  const progress = formatInstallmentProgress(installmentStatus);
 
   const placeText = !item.purchaseUrl && (item.storeName || item.storeLocation) 
     ? [item.storeName, item.storeLocation].filter(Boolean).join(' · ') 
@@ -51,18 +67,23 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
       {/* IMAGEN CON CLICK PARA ABRIR MODAL */}
       <div 
         onClick={() => setSelectedItem(item)}
-        className={`relative cursor-pointer aspect-[16/9] overflow-hidden bg-surface-2 ${!src ? 'flex items-center justify-center text-muted text-xs bg-gradient-to-br from-surface-2 to-surface-3' : ''}`}
+        className="relative cursor-pointer aspect-[16/9] overflow-hidden bg-surface-2 border-b border-line"
       >
-        {src ? (
+        {showImage ? (
           <img 
             src={src} 
             alt={`Imagen de ${item.name}`} 
             loading="lazy" 
             className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${item.bought && !wishlistMode ? 'grayscale opacity-50' : ''}`} 
-            onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+            onError={() => setFailedSrc(src)} 
           />
         ) : (
-          <Icon name={catIcon} size={32} className="opacity-20" />
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 text-center">
+            <Icon name={catIcon} size={28} className="text-muted opacity-40" />
+            <span className="max-w-full truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted" title={item.category}>
+              {item.category}
+            </span>
+          </div>
         )}
         
         {/* Overlay sutil al pasar el mouse */}
@@ -98,22 +119,53 @@ function ItemCardBase({ item, wishlistMode }: ItemCardProps) {
           )}
         </div>
 
-        <h3 className={`text-sm font-semibold leading-tight line-clamp-2 mt-0.5 ${item.bought && !wishlistMode ? 'text-muted line-through' : 'text-ink'}`}>
+        <h3 className={`text-sm font-semibold leading-tight line-clamp-2 mt-0.5 ${item.bought && !wishlistMode ? 'text-muted line-through' : 'text-ink'}`} title={item.name}>
           {item.name}
         </h3>
 
-        {identity && <p className="text-[0.65rem] text-muted truncate mt-0.5">{identity}</p>}
+        {identity && <p className="text-[0.65rem] text-muted truncate mt-0.5" title={identity}>{identity}</p>}
+
+        {item.subcategory && (
+          <p className="text-[0.65rem] text-muted truncate mt-0.5" title={item.subcategory}>{item.subcategory}</p>
+        )}
         
         {item.notes && <p className="text-[0.65rem] text-muted italic line-clamp-1 mt-0.5">"{item.notes}"</p>}
 
         <div className="flex items-end justify-between flex-wrap gap-1 mt-auto pt-2">
-          <div className="flex flex-col gap-0.5 min-w-0">
+          <div className="flex flex-col gap-1 min-w-0">
             <span className={`text-base font-bold tabular-nums tracking-tight ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>
               {money(item.price)}
             </span>
-            {installments && (
-              <span className="inline-flex w-fit items-center gap-1 px-1.5 py-0.5 rounded-full bg-medium-soft text-medium text-[0.6rem] font-bold">
-                {installments}
+
+            <div className="flex flex-wrap items-center gap-1">
+              {installments && (
+                <span className="inline-flex w-fit items-center gap-1 px-1.5 py-0.5 rounded-full bg-medium-soft text-medium text-[0.6rem] font-bold">
+                  {installments}
+                </span>
+              )}
+              {progress && (
+                <span
+                  className={`inline-flex w-fit items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.6rem] font-bold ${
+                    installmentStatus?.finished ? 'bg-surface-2 text-muted' : 'bg-high-soft text-high'
+                  }`}
+                >
+                  <Icon name="calendar" size={9} />
+                  {progress}
+                </span>
+              )}
+            </div>
+
+            {payment && (
+              <span
+                className={`inline-flex w-fit max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.6rem] font-semibold ${
+                  payment === 'Pagado con cuenta eliminada' || payment === 'Sin cuenta vinculada'
+                    ? 'bg-surface-2 text-muted'
+                    : 'bg-accent-soft text-accent-ink'
+                }`}
+                title={payment}
+              >
+                <Icon name="wallet" size={9} className="shrink-0" />
+                <span className="truncate">{payment}</span>
               </span>
             )}
           </div>

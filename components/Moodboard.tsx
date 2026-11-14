@@ -9,6 +9,10 @@ export function Moodboard() {
   const { items } = useData();
   const { setView, setSelectedItem } = useUI();
   const [filter, setFilter] = useState<'todos' | 'lista' | 'wishlist'>('todos');
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+
+  const markFailed = (id: string) =>
+    setFailedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
 
   const withImage = useMemo(() => {
     return items.filter(i => {
@@ -53,12 +57,25 @@ export function Moodboard() {
               onClick={() => setSelectedItem(it)}
               className="group relative m-0 aspect-square overflow-hidden border border-line rounded-2xl bg-surface-2 cursor-pointer shadow-sm hover:shadow-md transition-all duration-300"
             >
-              <img 
-                src={getItemImage(it)} 
-                alt={it.name} 
-                loading="lazy"
-                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" 
-              />
+              {failedIds.includes(it.id) ? (
+                <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-3 text-center">
+                  <Icon name="photo" size={26} className="text-muted opacity-40" />
+                  <span
+                    className="max-w-full truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted"
+                    title={it.category}
+                  >
+                    {it.category}
+                  </span>
+                </div>
+              ) : (
+                <img
+                  src={getItemImage(it)}
+                  alt={it.name}
+                  loading="lazy"
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                  onError={() => markFailed(it.id)}
+                />
+              )}
               
               {/* Overlay de Información */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">

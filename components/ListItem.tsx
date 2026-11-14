@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useData, useUI } from '@/state/AppProvider';
-import { money, getItemImage, formatMonth } from '@/lib/utils';
+import { useData, usePurchasePayment, useUI } from '@/state/AppProvider';
+import { money, getItemImage, formatMonth, getInstallmentStatus, formatInstallmentProgress, currentMonthKey } from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import type { Item } from '@/lib/types';
 import { Icon } from './Icon';
@@ -32,7 +33,13 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
   };
 
   const src = getItemImage(item);
-  const identity = [item.brand, item.color].filter(Boolean).join(' · ');
+  const identity = [item.brand, item.model, item.color].filter(Boolean).join(' · ');
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = src.length > 0 && failedSrc !== src;
+
+  const payment = usePurchasePayment(item);
+  const installmentStatus = getInstallmentStatus(item.installments, currentMonthKey());
+  const progress = formatInstallmentProgress(installmentStatus);
 
   return (
     <li 
@@ -57,35 +64,72 @@ export function ListItem({ item, wishlistMode, isDraggable = false }: Props) {
         className="relative w-14 h-14 shrink-0 rounded-lg overflow-hidden bg-surface-2 border border-line cursor-pointer"
         onClick={() => setSelectedItem(item)}
       >
-        {src ? (
-          <img src={src} alt={item.name} className={`w-full h-full object-cover ${item.bought && !wishlistMode ? 'grayscale opacity-50' : ''}`} />
+        {showImage ? (
+          <img
+            src={src}
+            alt={item.name}
+            className={`w-full h-full object-cover ${item.bought && !wishlistMode ? 'grayscale opacity-50' : ''}`}
+            onError={() => setFailedSrc(src)}
+          />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-muted">
-            <Icon name="store" size={20} className="opacity-30" />
+          <div className="w-full h-full flex flex-col items-center justify-center gap-0.5 text-muted">
+            <Icon name="store" size={18} className="opacity-40" />
+            <span className="max-w-[52px] truncate px-0.5 text-[0.5rem] font-semibold uppercase tracking-wide" title={item.category}>
+              {item.category}
+            </span>
           </div>
         )}
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className={`text-[0.6rem] font-bold uppercase tracking-wider ${item.bought && !wishlistMode ? 'text-muted' : 'text-accent'}`}>
+        <div className="flex items-center gap-2 mb-0.5 min-w-0">
+          <span className={`text-[0.6rem] font-bold uppercase tracking-wider shrink-0 ${item.bought && !wishlistMode ? 'text-muted' : 'text-accent'}`}>
             {PRIORITY.get(item.priority)?.label || 'Media'}
           </span>
-          <span className="text-[0.65rem] text-muted truncate">{item.category}</span>
+          <span className="text-[0.65rem] text-muted truncate min-w-0" title={item.category}>{item.category}</span>
+          {item.subcategory && (
+            <span className="text-[0.65rem] text-muted truncate min-w-0" title={item.subcategory}>· {item.subcategory}</span>
+          )}
           {item.purchaseMonth && (
             <span className="text-[0.6rem] text-medium font-bold ml-auto shrink-0">
               {formatMonth(item.purchaseMonth)}
             </span>
           )}
         </div>
-        <h3 className={`text-sm font-semibold truncate ${item.bought && !wishlistMode ? 'line-through text-muted' : 'text-ink'}`}>
+        <h3 className={`text-sm font-semibold truncate ${item.bought && !wishlistMode ? 'line-through text-muted' : 'text-ink'}`} title={item.name}>
           {item.name}
         </h3>
-        {identity && <p className="text-[0.7rem] text-muted truncate">{identity}</p>}
+        {identity && <p className="text-[0.7rem] text-muted truncate" title={identity}>{identity}</p>}
         <p className={`text-sm font-bold mt-0.5 ${item.bought && !wishlistMode ? 'text-muted' : 'text-ink'}`}>
           {money(item.price)}
         </p>
+
+        {(progress || payment) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
+            {progress && (
+              <span
+                className={`text-[0.6rem] font-bold ${
+                  installmentStatus?.finished ? 'text-muted' : 'text-high'
+                }`}
+              >
+                {progress}
+              </span>
+            )}
+            {payment && (
+              <span
+                className={`truncate text-[0.6rem] font-semibold ${
+                  payment === 'Sin cuenta vinculada' || payment === 'Pagado con cuenta eliminada'
+                    ? 'text-muted'
+                    : 'text-accent-ink'
+                }`}
+                title={payment}
+              >
+                · {payment}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Acciones */}

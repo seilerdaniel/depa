@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capacidad principal para la ventana de DEPA",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "sql:allow-execute"
+  ]
+}

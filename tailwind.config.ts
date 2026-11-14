@@ -14,6 +14,7 @@ export default {
         accent: { DEFAULT: 'var(--accent)', ink: 'var(--accent-ink)', soft: 'var(--accent-soft)', on: 'var(--on-accent)' },
         danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
         urgent: { DEFAULT: 'var(--urgent)', soft: 'var(--urgent-soft)' },
+        high: { DEFAULT: 'var(--high)', soft: 'var(--high-soft)' },
         medium: { DEFAULT: 'var(--medium)', soft: 'var(--medium-soft)' },
         low: { DEFAULT: 'var(--low)', soft: 'var(--low-soft)' },
       },

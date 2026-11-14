@@ -1,29 +1,37 @@
 'use client';
 
 import { useState } from 'react';
-import { useUI } from '@/state/AppProvider';
-import { money, formatDimensions, formatInstallments, getItemImage, formatMonth } from '@/lib/utils';
+import { usePurchasePayment, useUI } from '@/state/AppProvider';
+import {
+  money, formatDimensions, formatInstallments, getItemImage, formatMonth,
+  getInstallmentStatus, formatInstallmentProgress, currentMonthKey,
+} from '@/lib/utils';
 import { PRIORITY } from '@/lib/config';
 import { Icon } from './Icon';
 
 export function ItemModal() {
   // 1. Los hooks SIEMPRE van primero
   const [isExpanded, setIsExpanded] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const { selectedItem, setSelectedItem } = useUI();
+  const payment = usePurchasePayment(selectedItem ?? { id: '', bought: false });
 
   // 2. Después de los hooks, hacemos el retorno temprano
   if (!selectedItem) return null;
 
   const item = selectedItem;
   const src = getItemImage(item);
+  const showImage = src.length > 0 && failedSrc !== src;
   const dims = formatDimensions(item.dimensions);
   const installments = formatInstallments(item.installments);
+  const installmentStatus = getInstallmentStatus(item.installments, currentMonthKey());
+  const progress = formatInstallmentProgress(installmentStatus);
   const hasTechnicalDetails = Boolean(item.brand || item.model || item.color);
   const hasWarranty = item.warranty != null && item.warranty > 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedItem(null)}>
-      <div 
+      <div
         className="bg-surface w-full max-w-2xl max-h-[90vh] rounded-3xl border border-line shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
@@ -35,41 +43,76 @@ export function ItemModal() {
         </div>
 
         <div className="overflow-y-auto">
-          {src && (
-            <div className={`relative w-full bg-surface-2 flex items-center justify-center transition-all duration-300 ${isExpanded ? 'h-[60vh]' : 'aspect-video sm:aspect-[21/9]'}`}>
-              <img 
-                src={src} 
-                alt={item.name} 
-                className={`w-full h-full transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`} 
-              />
-              
-              {/* Botón flotante para expandir/minimizar */}
-              <button 
-                onClick={() => setIsExpanded(!isExpanded)}
-                className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg"
-                title={isExpanded ? "Ajustar a pantalla" : "Expandir imagen"}
-              >
-                <Icon name={isExpanded ? 'minimize' : 'maximize'} size={16} />
-              </button>
-            </div>
-          )}
+          <div
+            className={`relative w-full bg-surface-2 border-b border-line flex items-center justify-center transition-all duration-300 ${
+              showImage ? (isExpanded ? 'h-[60vh]' : 'aspect-video sm:aspect-[21/9]') : 'h-36 sm:h-44'
+            }`}
+          >
+            {showImage ? (
+              <>
+                <img
+                  src={src}
+                  alt={item.name}
+                  className={`w-full h-full transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`}
+                  onError={() => setFailedSrc(src)}
+                />
+
+                {/* Botón flotante para expandir/minimizar */}
+                <button
+                  onClick={() => setIsExpanded(!isExpanded)}
+                  className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg"
+                  title={isExpanded ? "Ajustar a pantalla" : "Expandir imagen"}
+                >
+                  <Icon name={isExpanded ? 'minimize' : 'maximize'} size={16} />
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-2 px-6 text-center">
+                <Icon name="store" size={30} className="text-muted opacity-40" />
+                <span
+                  className="max-w-full truncate text-xs font-semibold uppercase tracking-wide text-muted"
+                  title={item.subcategory || item.category}
+                >
+                  {item.subcategory || item.category}
+                </span>
+                <span className="text-[0.7rem] text-muted">Sin imagen cargada</span>
+              </div>
+            )}
+          </div>
 
           <div className="p-5 sm:p-6 grid gap-6">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${PRIORITY.get(item.priority)!.id === 'urgente' ? 'bg-urgent-soft text-urgent' : PRIORITY.get(item.priority)!.id === 'media' ? 'bg-medium-soft text-medium' : 'bg-low-soft text-low'}`}>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${PRIORITY.get(item.priority)!.id === 'urgente' ? 'bg-urgent-soft text-urgent' :
+                  PRIORITY.get(item.priority)!.id === 'alta' ? 'bg-high-soft text-high' :
+                    PRIORITY.get(item.priority)!.id === 'media' ? 'bg-medium-soft text-medium' :
+                      'bg-low-soft text-low'
+                }`}>
                 Prioridad {PRIORITY.get(item.priority)!.label}
               </span>
-              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-surface-2 text-muted border border-line">
+              <span className="max-w-full truncate rounded-full bg-surface-2 px-3 py-1 text-xs font-bold uppercase tracking-wide text-muted border border-line" title={item.category}>
                 {item.category}
               </span>
               {item.subcategory && (
-                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-surface-2 text-muted border border-line">
+                <span className="max-w-full truncate rounded-full bg-surface-2 px-3 py-1 text-xs font-bold uppercase tracking-wide text-muted border border-line" title={item.subcategory}>
                   {item.subcategory}
                 </span>
               )}
               {item.purchaseMonth && (
                 <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-accent-soft text-accent-ink">
                   Planificado: {formatMonth(item.purchaseMonth)}
+                </span>
+              )}
+              {payment && (
+                <span
+                  className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                    payment === 'Sin cuenta vinculada' || payment === 'Pagado con cuenta eliminada'
+                      ? 'bg-surface-2 text-muted border border-line'
+                      : 'bg-accent-soft text-accent-ink'
+                  }`}
+                  title={payment}
+                >
+                  <Icon name="wallet" size={12} className="shrink-0" />
+                  <span className="truncate">{payment}</span>
                 </span>
               )}
             </div>
@@ -83,6 +126,15 @@ export function ItemModal() {
                 <div className="bg-surface-2 p-3 rounded-xl border border-line">
                   <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Financiación</p>
                   <p className="font-bold text-sm text-medium">{installments}</p>
+                  {progress && (
+                    <p
+                      className={`mt-1 text-[0.7rem] font-bold ${
+                        installmentStatus?.finished ? 'text-muted' : 'text-high'
+                      }`}
+                    >
+                      {progress}
+                    </p>
+                  )}
                 </div>
               )}
               {hasWarranty && (

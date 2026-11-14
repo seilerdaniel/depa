@@ -1,4 +1,4 @@
-import type { Priority, SortMode, StatusFilter, Prefs } from './types';
+import type { Priority, SortMode, StatusFilter, Prefs, ViewMode, AccountType, TransactionType } from './types';
 
 export const DEFAULT_CATEGORIES = [
   'Electrodomésticos grandes',
@@ -14,19 +14,26 @@ export const SUBCATEGORY_MAX_LENGTH = 40;
 
 export const PRIORITIES: { id: Priority; label: string; rank: number }[] = [
   { id: 'urgente', label: 'Urgente', rank: 0 },
-  { id: 'media', label: 'Media', rank: 1 },
-  { id: 'baja', label: 'Baja', rank: 2 },
+  { id: 'alta', label: 'Alta', rank: 1 },    // NUEVO RANGO 1
+  { id: 'media', label: 'Media', rank: 2 },  // RANK AJUSTADO A 2
+  { id: 'baja', label: 'Baja', rank: 3 },    // RANK AJUSTADO A 3
 ];
 export const PRIORITY = new Map(PRIORITIES.map((p) => [p.id, p]));
 
 export const STATUS_FILTERS: ReadonlySet<StatusFilter> = new Set(['todos', 'pendientes', 'comprados']);
-export const SORT_MODES: ReadonlySet<SortMode> = new Set(['prioridad', 'precio-desc', 'precio-asc', 'nombre']);
+export const SORT_MODES: ReadonlySet<SortMode> = new Set(['prioridad', 'precio-desc', 'precio-asc', 'nombre', 'manual']);
+export const VIEW_MODES: ReadonlySet<ViewMode> = new Set(['grid', 'list', 'table']);
 export const TAB_ORDER = ['list', 'wishlist', 'moodboard', 'dashboard', 'history'] as const;
+
+export const ACCOUNT_TYPES: ReadonlySet<AccountType> = new Set(['banco', 'billetera', 'efectivo', 'tarjeta']);
+export const TRANSACTION_TYPES: ReadonlySet<TransactionType> = new Set(['ingreso', 'gasto', 'transferencia']);
 
 export const STORAGE_KEYS = {
   items: 'depa.items.v1',
   prefs: 'depa.prefs.v1',
   categories: 'depa.categories.v1',
+  accounts: 'depa.accounts.v1',
+  transactions: 'depa.transactions.v1',
 } as const;
 
 export const DEFAULT_PREFS: Prefs = {

@@ -1,6 +1,7 @@
 @import "tailwindcss";
-@custom-variant dark (&:is(.dark *));
 
+/* Tailwind CSS v4 processes @theme; suppress Stylelint's generic CSS warning. */
+/* stylelint-disable at-rule-no-unknown */
 @theme {
   /* ... (tus variables @theme actuales se mantienen) ... */
   --color-bg: var(--bg);
@@ -20,11 +21,17 @@
   --color-danger-soft: var(--danger-soft);
   --color-urgent: var(--urgent);
   --color-urgent-soft: var(--urgent-soft);
+  --color-high: var(--high);
+  --color-high-soft: var(--high-soft);
   --color-medium: var(--medium);
   --color-medium-soft: var(--medium-soft);
   --color-low: var(--low);
   --color-low-soft: var(--low-soft);
+
+  /* Sombra del sistema: `--shadow` vive en :root y cambia con el tema. */
+  --shadow-soft: var(--shadow);
 }
+/* stylelint-enable at-rule-no-unknown */
 
 :root {
   color-scheme: light dark;
@@ -48,6 +55,8 @@
   --danger-soft: #fbe8e5;
   --urgent: #b3261e; 
   --urgent-soft: #fbe7e4;
+  --high: #c44900; 
+  --high-soft: #fce8dc;
   --medium: #8a5a00; 
   --medium-soft: #fdf0d5;
   --low: #226b45; 
@@ -77,6 +86,8 @@
     --danger-soft: rgba(255,122,104,.14);
     --urgent: #ff8a7a; 
     --urgent-soft: rgba(255,122,104,.14);
+    --high: #ff9d5c; 
+    --high-soft: rgba(255,157,92,.14);
     --medium: #f0b64b; 
     --medium-soft: rgba(240,182,75,.14);
     --low: #79d3a4; 

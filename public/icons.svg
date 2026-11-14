@@ -221,5 +221,55 @@
         stroke-width="2" />
       <path d="M9 3v18M15 3v18" fill="none" stroke="currentColor" stroke-width="2" />
     </symbol>
+
+    <!-- Finanzas: flechas de ingreso / gasto -->
+    <symbol id="icon-arrow-up" viewBox="0 0 24 24">
+      <path d="M12 19V5m-7 7 7-7 7 7" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-arrow-down" viewBox="0 0 24 24">
+      <path d="M12 5v14m7-7-7 7-7-7" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Billetera -->
+    <symbol id="icon-wallet" viewBox="0 0 24 24">
+      <path
+        d="M19 7V5a1 1 0 0 0-1-1H5.5A2.5 2.5 0 0 0 3 6.5v11A2.5 2.5 0 0 0 5.5 20H18a1 1 0 0 0 1-1v-2"
+        fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+        stroke-linejoin="round" />
+      <path d="M21 9h-4a3 3 0 0 0 0 6h4a1 1 0 0 0 1-1v-4a1 1 0 0 0-1-1Z" fill="none"
+        stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Banco / sucursal -->
+    <symbol id="icon-bank" viewBox="0 0 24 24">
+      <path d="M3 21h18M4 10h16M12 3 20 7H4l8-4ZM6 10v8m4-8v8m4-8v8m4-8v8" fill="none"
+        stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+
+    <!-- Alias de 'add' (usado por Home y por botones de alta) -->
+    <symbol id="icon-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" />
+    </symbol>
+
+    <!-- Carrito de compras -->
+    <symbol id="icon-shopping-cart" viewBox="0 0 24 24">
+      <path
+        d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"
+        fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+        stroke-linejoin="round" />
+      <circle cx="8.5" cy="20" r="1.2" fill="currentColor" />
+      <circle cx="18.5" cy="20" r="1.2" fill="currentColor" />
+    </symbol>
+
+    <!-- Campana de notificaciones -->
+    <symbol id="icon-bell" viewBox="0 0 24 24">
+      <path
+        d="M10.27 21a2 2 0 0 0 3.46 0M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33Z"
+        fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+        stroke-linejoin="round" />
+    </symbol>
   </defs>
 </svg>

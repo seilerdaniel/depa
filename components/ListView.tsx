@@ -4,8 +4,7 @@ import { useDeferredValue, useMemo, useState } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, rectSortingStrategy, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useData, usePrefs } from '@/state/AppProvider';
-import { sameText } from '@/lib/utils';
-import { PRIORITY } from '@/lib/config';
+import { priorityWeight, sameText } from '@/lib/utils';
 import type { Item, SortMode } from '@/lib/types';
 import { ItemCard } from './ItemCard';
 import { TableView } from './TableView';
@@ -80,7 +79,9 @@ export function ListView({ mode }: Props) {
 
     if (currentSort === 'manual') return list;
 
-    const byPriority = (a: Item, b: Item) => PRIORITY.get(a.priority)!.rank - PRIORITY.get(b.priority)!.rank || b.createdAt - a.createdAt;
+    // Descendente: 5 (urgente) → 0 (desconocida). createdAt como desempate estable.
+    const byPriority = (a: Item, b: Item) =>
+      priorityWeight(b.priority) - priorityWeight(a.priority) || b.createdAt - a.createdAt;
     list.sort(
       currentSort === 'precio-desc' ? (a, b) => b.price - a.price || byPriority(a, b)
         : currentSort === 'precio-asc' ? (a, b) => a.price - b.price || byPriority(a, b)
@@ -155,7 +156,7 @@ export function ListView({ mode }: Props) {
           <label className="text-xs font-semibold text-ink-soft">Ordenar por</label>
           <div className="relative">
             <select value={prefs[sortKey]} onChange={(e) => setPrefs({ [sortKey]: e.target.value } as any)} className={selectCls}>
-              <option value="prioridad">Urgentes primero</option>
+              <option value="prioridad">Prioridad (mayor a menor)</option>
               <option value="precio-desc">Mayor precio</option>
               <option value="precio-asc">Menor precio</option>
               <option value="nombre">Nombre</option>

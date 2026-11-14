@@ -2,12 +2,14 @@ import {
   CATEGORY_MAX_LENGTH,
   SUBCATEGORY_MAX_LENGTH,
   PRIORITY,
+  ACCOUNT_TYPES,
+  TRANSACTION_TYPES,
   MAX_PHOTO_SIDE,
   MAX_PHOTO_DATA_LENGTH,
   PHOTO_QUALITIES,
   MAX_UPLOAD_BYTES,
 } from './config';
-import type { Dimensions, Installments, Item } from './types';
+import type { Account, AccountType, Dimensions, Installments, Item, SavingsGoal, Transaction, TransactionType } from './types';
 
 // ==========================================
 // FORMATEADORES
@@ -17,6 +19,38 @@ export const dimensionFormatter = new Intl.NumberFormat('es-AR', { maximumFracti
 
 export const money = (v: number) => `$ ${priceFormatter.format(v)}`;
 export const pluralize = (n: number, s: string, p: string) => `${n} ${n === 1 ? s : p}`;
+
+/** Redondeo a centavos. Evita arrastrar errores de coma flotante en saldos. */
+export const roundMoney = (n: number) => Math.round(n * 100) / 100;
+
+// ==========================================
+// PRIORIDADES
+// ==========================================
+/**
+ * Peso numérico 0..5 de una prioridad, para ordenar de mayor a menor.
+ *
+ * Acepta tanto los ids canónicos de la app ('urgente' | 'media' | 'baja')
+ * como texto heredado de backups viejos ('URGENTE', 'ALTA', 'MEDIA', 'BAJA').
+ * Un valor desconocido pesa 0: nunca gana un ordenamiento por prioridad,
+ * pero tampoco rompe el render.
+ */
+const PRIORITY_WEIGHTS: Record<string, number> = {
+  urgente: 5,
+  alta: 4,
+  media: 3,
+  baja: 2,
+  'muy baja': 1,
+  'sin prioridad': 0,
+};
+
+export function priorityWeight(value: unknown): number {
+  const key = String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('es')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return PRIORITY_WEIGHTS[key] ?? 0;
+}
 
 /**
  * Formatea un string 'YYYY-MM' a un texto legible (ej: 'Dic 2024').
@@ -38,6 +72,22 @@ export const sameText = (a?: string, b?: string) =>
 
 export const normalizeLabel = (value: unknown, max: number) =>
   typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : '';
+
+/** Texto comparable: minúsculas y sin acentos, para buscadores. */
+export const foldText = (value: unknown): string =>
+  String(value ?? '')
+    .toLocaleLowerCase('es')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+/** Valida un mes 'YYYY-MM' (incluye el rango 01-12). Cualquier otra cosa → null. */
+export const normalizeMonth = (value: unknown): string | null =>
+  typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : null;
+
+/** Clave del mes actual en formato 'YYYY-MM', para comparar con `startMonth`. */
+export function currentMonthKey(date: Date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
 
 export const createId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -111,7 +161,14 @@ export function normalizeInstallments(raw: unknown): Installments | null {
   const amount = Number((raw as any).amount);
   if (!Number.isFinite(count) || count < 1 || count > 72) return null;
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  return { count: Math.round(count), amount: Math.round(amount * 100) / 100 };
+
+  // `normalizeItem` delega acá, así que este es el único lugar donde hay que
+  // preservar `startMonth`. Sin él, el artículo queda como legado: activo.
+  return {
+    count: Math.round(count),
+    amount: Math.round(amount * 100) / 100,
+    startMonth: normalizeMonth((raw as any).startMonth),
+  };
 }
 
 /**
@@ -159,6 +216,115 @@ export function normalizeItem(raw: unknown): Item | null {
 };
 
 // ==========================================
+// NORMALIZACIÓN DE ENTIDADES FINANCIERAS
+// ==========================================
+/**
+ * Convierte una cuenta cruda (localStorage / backup) en una Account segura.
+ * Descarta lo que no tenga nombre; el resto se corrige a valores por defecto.
+ */
+export function normalizeAccount(raw: unknown): Account | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const name = normalizeLabel(r.name, 60);
+  if (!name) return null;
+
+  const balance = Number(r.balance);
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    name,
+    type: ACCOUNT_TYPES.has(r.type as AccountType) ? (r.type as AccountType) : 'efectivo',
+    balance: Number.isFinite(balance) ? roundMoney(balance) : 0,
+    color: normalizeLabel(r.color, 20) || 'accent',
+    createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
+  };
+}
+
+/**
+ * Convierte un movimiento crudo en una Transaction segura.
+ * Reglas: siempre hay cuenta origen, el monto es positivo y sólo las
+ * transferencias conservan `destinationAccountId`.
+ */
+export function normalizeTransaction(raw: unknown): Transaction | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const accountId = typeof r.accountId === 'string' ? r.accountId : '';
+  if (!accountId) return null;
+
+  const amount = Number(r.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const type: TransactionType = TRANSACTION_TYPES.has(r.type as TransactionType)
+    ? (r.type as TransactionType)
+    : 'gasto';
+
+  const destination = typeof r.destinationAccountId === 'string' && r.destinationAccountId
+    ? r.destinationAccountId
+    : null;
+
+  const linkedItemId = typeof r.linkedItemId === 'string' && r.linkedItemId
+    ? r.linkedItemId
+    : null;
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    accountId,
+    destinationAccountId: type === 'transferencia' ? destination : null,
+    type,
+    amount: roundMoney(amount),
+    date: Number.isFinite(r.date) ? (r.date as number) : Date.now(),
+    category: normalizeLabel(r.category, 40),
+    notes: normalizeLabel(r.notes, 250),
+    linkedItemId,
+  };
+}
+
+/**
+ * Deja sólo los movimientos cuyas cuentas existen realmente.
+ * Evita huérfanos tras borrar una cuenta o importar un backup inconsistente.
+ */
+export function pruneTransactions(transactions: Transaction[], accounts: Account[]): Transaction[] {
+  const ids = new Set(accounts.map((a) => a.id));
+  return transactions.filter((t) => {
+    if (!ids.has(t.accountId)) return false;
+    if (t.type !== 'transferencia') return true;
+    return !!t.destinationAccountId && ids.has(t.destinationAccountId);
+  });
+}
+
+// ==========================================
+// METAS DE AHORRO
+// ==========================================
+/**
+ * Convierte una meta cruda (SQLite / backup) en una SavingsGoal segura.
+ * Descarta lo que no tenga nombre; los montos se sanean a >= 0.
+ */
+export function normalizeSavingsGoal(raw: unknown): SavingsGoal | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const name = normalizeLabel(r.name, 60);
+  if (!name) return null;
+
+  const target = roundMoney(Number(r.targetAmount));
+  const current = roundMoney(Number(r.currentAmount));
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    name,
+    targetAmount: Number.isFinite(target) && target > 0 ? target : 0,
+    currentAmount: Number.isFinite(current) && current > 0 ? current : 0,
+    color: normalizeLabel(r.color, 20) || 'accent',
+    deadline: typeof r.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.deadline)
+      ? r.deadline
+      : null,
+    createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
+  };
+}
+
+// ==========================================
 // FORMATEADORES DE VISTA (UI)
 // ==========================================
 export const cleanFilterValue = (v: unknown) => normalizeLabel(v, CATEGORY_MAX_LENGTH) || 'todas';
@@ -180,6 +346,145 @@ export function formatDimensions(d?: Dimensions | null): string {
 export function formatInstallments(inst?: Installments | null): string {
   if (!inst || inst.count < 1 || inst.amount <= 0) return '';
   return `${inst.count} cuota${inst.count === 1 ? '' : 's'} × ${money(inst.amount)}`;
+}
+
+// ==========================================
+// SEGUIMIENTO DE CUOTAS
+// ==========================================
+export interface InstallmentStatus {
+  /** Queda al menos una cuota por pagar en el mes actual. */
+  active: boolean;
+  /** Cuota vigente (1-based). 0 si terminó o si no hay `startMonth` conocido. */
+  current: number;
+  total: number;
+  /** Monto que sigue pesando este mes. 0 cuando ya se pagaron todas. */
+  monthlyAmount: number;
+  /** `true` cuando `elapsed >= count`. */
+  finished: boolean;
+}
+
+/** Índice absoluto de mes (año * 12 + mes 0-11) para restar sin cruzar años. */
+const monthIndex = (value: string): number | null => {
+  const month = normalizeMonth(value);
+  if (!month) return null;
+  const [year, m] = month.split('-').map(Number);
+  return year * 12 + (m - 1);
+};
+
+/**
+ * Estado de una financiación en un mes dado.
+ *
+ * Reglas:
+ * - Sin `startMonth` (artículos viejos) se considera activa y se cobra completa.
+ * - Si el mes actual es anterior al inicio, la cuota vigente es la 1.
+ * - Si ya transcurrieron `count` meses, la financiación terminó: no suma al fijo.
+ */
+export function getInstallmentStatus(
+  installments: Installments | null | undefined,
+  currentMonthYYYYMM: string,
+): InstallmentStatus | null {
+  if (!installments || installments.count < 1 || installments.amount <= 0) return null;
+
+  const total = installments.count;
+  const start = installments.startMonth ? monthIndex(installments.startMonth) : null;
+  const now = monthIndex(currentMonthYYYYMM);
+
+  // Retrocompatibilidad: no se puede saber cuántas cuotas van.
+  if (start === null || now === null) {
+    return {
+      active: true,
+      current: 0,
+      total,
+      monthlyAmount: installments.amount,
+      finished: false,
+    };
+  }
+
+  const elapsed = Math.max(0, now - start);
+
+  if (elapsed >= total) {
+    return { active: false, current: 0, total, monthlyAmount: 0, finished: true };
+  }
+
+  return {
+    active: true,
+    current: elapsed + 1,
+    total,
+    monthlyAmount: installments.amount,
+    finished: false,
+  };
+}
+
+/** Texto de progreso: "Cuota 3 de 6" o "Cuotas finalizadas". */
+export function formatInstallmentProgress(status: InstallmentStatus | null): string {
+  if (!status) return '';
+  if (status.finished) return 'Cuotas finalizadas';
+  if (status.current >= 1) return `Cuota ${status.current} de ${status.total}`;
+  return '';
+}
+
+// ==========================================
+// RESUMEN DE COMPRAS (fuente única de verdad)
+// ==========================================
+export interface PurchasesSummary {
+  pendingTotal: number;
+  pendingCount: number;
+  boughtTotal: number;
+  boughtCount: number;
+  /** Pendiente + comprado. */
+  grand: number;
+  /** Compromiso mensual de cuotas ACTIVAS de artículos YA comprados. */
+  monthlyAmount: number;
+  /** Cuántas financiaciones siguen vigentes este mes. */
+  activeInstallments: number;
+}
+
+/**
+ * Único lugar donde se define qué cuenta cada métrica de compras.
+ *
+ * `PurchasesPanel` y `Dashboard` lo consumen: si mañana cambia la regla,
+ * cambia acá y las dos pantallas siguen coincidiendo al centavo.
+ */
+export function summarizePurchases(
+  items: Item[],
+  currentMonthYYYYMM: string,
+): PurchasesSummary {
+  let pendingTotal = 0;
+  let pendingCount = 0;
+  let boughtTotal = 0;
+  let boughtCount = 0;
+  let monthlyAmount = 0;
+  let activeInstallments = 0;
+
+  for (const item of items) {
+    if (item.wishlist) continue;
+
+    if (item.bought) {
+      boughtTotal += item.price;
+      boughtCount += 1;
+
+      // Sólo una compra efectiva genera compromiso, y sólo mientras la
+      // financiación no haya terminado.
+      const status = getInstallmentStatus(item.installments, currentMonthYYYYMM);
+      if (status?.active && status.monthlyAmount > 0) {
+        monthlyAmount += status.monthlyAmount;
+        activeInstallments += 1;
+      }
+    } else {
+      pendingTotal += item.price;
+      pendingCount += 1;
+    }
+  }
+
+  return {
+    pendingTotal: roundMoney(pendingTotal),
+    pendingCount,
+    boughtTotal: roundMoney(boughtTotal),
+    boughtCount,
+    grand: roundMoney(pendingTotal + boughtTotal),
+    monthlyAmount: roundMoney(monthlyAmount),
+    activeInstallments,
+  };
 }
 
 // ==========================================

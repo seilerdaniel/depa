@@ -2,14 +2,15 @@
 
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { useData, useUI } from '@/state/AppProvider';
-import { normalizeLabel, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText } from '@/lib/utils';
+import { normalizeLabel, normalizeMonth, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText, formatMonth } from '@/lib/utils';
 import { PRIORITY, CATEGORY_MAX_LENGTH, SUBCATEGORY_MAX_LENGTH } from '@/lib/config';
+import type { Installments } from '@/lib/types';
 import { Icon } from './Icon';
 
 interface FormState {
   name: string; category: string; subcategory: string; price: string;
-  priority: 'urgente' | 'media' | 'baja'; wishlist: boolean;
-  purchaseMonth: string; installments: string; installmentAmount: string;
+  priority: 'urgente' | 'alta' | 'media' | 'baja'; wishlist: boolean;
+  purchaseMonth: string; installments: string; installmentAmount: string; installmentStart: string;
   imageUrl: string; photoData: string; purchaseUrl: string;
   storeName: string; storeLocation: string; height: string; width: string; depth: string; notes: string;
   brand: string; model: string; color: string; warranty: string; orderNumber: string;
@@ -19,7 +20,7 @@ type Errors = Partial<Record<'name' | 'category' | 'price' | 'imageUrl' | 'purch
 
 const EMPTY: FormState = {
   name: '', category: '', subcategory: '', price: '', priority: 'media', wishlist: false,
-  purchaseMonth: '', installments: '', installmentAmount: '', imageUrl: '', photoData: '',
+  purchaseMonth: '', installments: '', installmentAmount: '', installmentStart: '', imageUrl: '', photoData: '',
   purchaseUrl: '', storeName: '', storeLocation: '', height: '', width: '', depth: '', notes: '',
   brand: '', model: '', color: '', warranty: '', orderNumber: ''
 };
@@ -47,6 +48,7 @@ export function ItemForm() {
         purchaseMonth: editingItem.purchaseMonth || '',
         installments: editingItem.installments ? String(editingItem.installments.count) : '',
         installmentAmount: editingItem.installments ? String(editingItem.installments.amount) : '',
+        installmentStart: editingItem.installments?.startMonth || '',
         imageUrl: editingItem.imageUrl, photoData: editingItem.imageData, purchaseUrl: editingItem.purchaseUrl,
         storeName: editingItem.storeName, storeLocation: editingItem.storeLocation,
         height: editingItem.dimensions?.height ? String(editingItem.dimensions.height) : '',
@@ -107,12 +109,17 @@ export function ItemForm() {
     const h = parseDimension(form.height), w = parseDimension(form.width), d = parseDimension(form.depth);
     if ([h, w, d].some((v) => Number.isNaN(v))) errs.dimensions = 'Medidas inválidas.';
     const countRaw = form.installments.trim(), amountRaw = form.installmentAmount.trim();
-    let installments: { count: number; amount: number } | null = null;
+    let installments: Installments | null = null;
     if (countRaw || amountRaw) {
       const c = Number(countRaw), a = parsePrice(amountRaw);
       if (!Number.isInteger(c) || c < 1 || c > 72) errs.installments = 'Cuotas: entre 1 y 72.';
       else if (!Number.isFinite(a) || a <= 0) errs.installments = 'Valor inválido.';
-      else installments = { count: c, amount: Math.round(a * 100) / 100 };
+      else installments = {
+        count: c,
+        amount: Math.round(a * 100) / 100,
+        // Una sola cuota no necesita calendario: no hay progreso que seguir.
+        startMonth: c > 1 ? normalizeMonth(form.installmentStart) : null,
+      };
     }
     const warrantyRaw = form.warranty.trim();
     let warranty: number | null = null;
@@ -161,7 +168,10 @@ export function ItemForm() {
   const inputCls = (invalid: boolean) => `w-full min-h-[44px] px-3 border rounded-xl bg-surface text-ink text-[0.95rem] focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/20 transition-colors ${invalid ? 'border-danger' : 'border-line-strong'}`;
 
   return (
-    <section className="border border-line rounded-3xl bg-surface shadow-soft flex flex-col overflow-hidden">
+    <section
+      id="item-form"
+      className="border border-line rounded-3xl bg-surface shadow-soft flex flex-col overflow-hidden"
+    >
       <div className="p-4 border-b border-line flex justify-between items-start bg-surface-2/30">
         <div>
           <h2 className="text-base font-semibold tracking-tight text-ink">{editingItem ? 'Editar artículo' : 'Agregar artículo'}</h2>
@@ -220,7 +230,10 @@ export function ItemForm() {
                 <Field label="Prioridad">
                   <div className="relative">
                     <select value={form.priority} onChange={(e) => update('priority', e.target.value as any)} className={`${inputCls(false)} pr-10 appearance-none cursor-pointer`}>
-                      <option value="urgente">Urgente</option><option value="media">Media</option><option value="baja">Baja</option>
+                      <option value="urgente">Urgente</option>
+                      <option value="alta">Alta</option>
+                      <option value="media">Media</option>
+                      <option value="baja">Baja</option>
                     </select>
                     <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
                   </div>
@@ -335,8 +348,32 @@ export function ItemForm() {
                 {errors.installments && <p className="text-xs text-danger px-1">{errors.installments}</p>}
               </div>
 
+              {Number(form.installments) > 1 && (
+                <Field label="Mes 1ª cuota (opcional)">
+                  <div className="relative w-full">
+                    <div className="flex items-center justify-between w-full min-h-[44px] px-3 border border-line-strong rounded-xl bg-surface text-sm pointer-events-none">
+                      <span className={form.installmentStart ? 'text-ink' : 'text-muted'}>
+                        {form.installmentStart ? formatMonth(form.installmentStart) : 'Se asume el mes de compra'}
+                      </span>
+                      <Icon name="calendar" size={16} className="text-muted" />
+                    </div>
+                    <input
+                      type="month"
+                      value={form.installmentStart}
+                      onChange={(e) => update('installmentStart', e.target.value)}
+                      aria-label="Mes de la primera cuota"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none"
+                    />
+                  </div>
+                  <p className="text-[0.7rem] text-muted leading-tight">
+                    Sirve para calcular cuántas cuotas van. Si lo dejás vacío, al marcar la compra se usa el mes
+                    planificado o el actual.
+                  </p>
+                </Field>
+              )}
+
               <p className="text-xs text-muted leading-relaxed bg-surface-2 p-3 rounded-xl border border-line">
-                Calculá tu gasto fijo mensual sumando las cuotas de tus compras.
+                Calculá tu gasto fijo mensual sumando las cuotas de tus compras. Las cuotas terminadas dejan de sumar.
               </p>
             </div>
           )}
