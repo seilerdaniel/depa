@@ -87,7 +87,7 @@ export const ACCENT_HOVER_BORDER: Record<CardAccentColor, string> = {
 
 /** Clases del contenedor de los módulos según la densidad elegida. */
 export const LAYOUT_GRID: Record<'cards-lg' | 'cards-sm' | 'list', string> = {
-  'cards-lg': 'grid grid-cols-1 gap-7 md:grid-cols-2 md:gap-8',
+  'cards-lg': 'grid grid-cols-1 gap-6 md:grid-cols-2',
   'cards-sm': 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3',
-  list: 'flex flex-col gap-3.5',
+  list: 'flex flex-col gap-3',
 };

@@ -8,13 +8,21 @@ import {
 } from '@/lib/utils';
 import { useResolvedImageSrc } from '@/lib/nativeImages';
 import { PRIORITY } from '@/lib/config';
+import type { Priority } from '@/lib/types';
 import { Icon } from './Icon';
+import { OptionComparator } from './OptionComparator';
+
+const PRIO_BADGE: Record<Priority, string> = {
+  urgente: 'bg-urgent-soft text-urgent',
+  alta: 'bg-high-soft text-high',
+  media: 'bg-medium-soft text-medium',
+  baja: 'bg-low-soft text-low',
+};
 
 export function ItemModal() {
-  // 1. Los hooks SIEMPRE van primero
   const [isExpanded, setIsExpanded] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const { selectedItem, setSelectedItem } = useUI();
+  const { selectedItem, setSelectedItem, setEditingItem } = useUI();
   const payment = usePurchasePayment(selectedItem ?? { id: '', bought: false });
 
   // El resolver es un hook: debe ejecutarse antes del retorno temprano.
@@ -22,17 +30,17 @@ export function ItemModal() {
 
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Cambiar de artículo devuelve la imagen a su tamaño normal.
   useEffect(() => {
     setIsExpanded(false);
     setFailedSrc(null);
   }, [selectedItem?.id]);
 
-  // Foco al abrir y Escape para cerrar: comportamiento esperado de un diálogo.
   useEffect(() => {
     if (!selectedItem) return;
 
     dialogRef.current?.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -42,10 +50,12 @@ export function ItemModal() {
     };
 
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [selectedItem, setSelectedItem]);
 
-  // 2. Después de los hooks, hacemos el retorno temprano
   if (!selectedItem) return null;
 
   const item = selectedItem;
@@ -57,8 +67,17 @@ export function ItemModal() {
   const hasTechnicalDetails = Boolean(item.brand || item.model || item.color);
   const hasWarranty = item.warranty != null && item.warranty > 0;
 
+  const handleEdit = () => {
+    setSelectedItem(null);
+    setEditingItem(item);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedItem(null)}>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={() => setSelectedItem(null)}
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -68,13 +87,32 @@ export function ItemModal() {
         className="bg-surface w-full max-w-2xl max-h-[90vh] rounded-3xl border border-line shadow-2xl overflow-hidden flex flex-col outline-none animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-4 border-b border-line bg-surface-2/30">
-          <h3 id="item-modal-title" className="font-bold text-lg text-ink truncate pr-4">{item.name}</h3>
-          <button type="button" onClick={() => setSelectedItem(null)} aria-label="Cerrar detalle" className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors">
-            <Icon name="cancel" size={20} />
-          </button>
+        {/* CABECERA */}
+        <div className="flex items-center justify-between gap-2 p-4 border-b border-line bg-surface-2/30">
+          <h3 id="item-modal-title" className="font-bold text-lg text-ink truncate pr-2">
+            {item.name}
+          </h3>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleEdit}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-line bg-surface text-xs font-bold text-ink hover:bg-surface-2 transition-colors cursor-pointer"
+            >
+              <Icon name="edit" size={14} />
+              Editar
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedItem(null)}
+              aria-label="Cerrar detalle"
+              className="p-2 rounded-full hover:bg-surface-3 text-muted hover:text-ink transition-colors cursor-pointer"
+            >
+              <Icon name="cancel" size={20} />
+            </button>
+          </div>
         </div>
 
+        {/* CONTENIDO */}
         <div className="overflow-y-auto">
           <div
             className={`relative w-full bg-surface-2 border-b border-line flex items-center justify-center transition-all duration-300 ${
@@ -83,6 +121,7 @@ export function ItemModal() {
           >
             {showImage ? (
               <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={src}
                   alt={item.name}
@@ -90,13 +129,12 @@ export function ItemModal() {
                   onError={() => setFailedSrc(src)}
                 />
 
-                {/* Botón flotante para expandir/minimizar */}
                 <button
                   type="button"
                   onClick={() => setIsExpanded(!isExpanded)}
-                  className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg"
+                  className="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors shadow-lg cursor-pointer"
                   aria-label={isExpanded ? 'Ajustar imagen a pantalla' : 'Expandir imagen'}
-                  title={isExpanded ? "Ajustar a pantalla" : "Expandir imagen"}
+                  title={isExpanded ? 'Ajustar a pantalla' : 'Expandir imagen'}
                 >
                   <Icon name={isExpanded ? 'minimize' : 'maximize'} size={16} />
                 </button>
@@ -117,11 +155,7 @@ export function ItemModal() {
 
           <div className="p-5 sm:p-6 grid gap-6">
             <div className="flex flex-wrap items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${PRIORITY.get(item.priority)!.id === 'urgente' ? 'bg-urgent-soft text-urgent' :
-                  PRIORITY.get(item.priority)!.id === 'alta' ? 'bg-high-soft text-high' :
-                    PRIORITY.get(item.priority)!.id === 'media' ? 'bg-medium-soft text-medium' :
-                      'bg-low-soft text-low'
-                }`}>
+              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${PRIO_BADGE[item.priority]}`}>
                 Prioridad {PRIORITY.get(item.priority)!.label}
               </span>
               <span className="max-w-full truncate rounded-full bg-surface-2 px-3 py-1 text-xs font-bold uppercase tracking-wide text-muted border border-line" title={item.category}>
@@ -155,7 +189,7 @@ export function ItemModal() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <div className="bg-surface-2 p-3 rounded-xl border border-line">
                 <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-1">Precio Total</p>
-                <p className="font-bold text-lg text-ink">{money(item.price)}</p>
+                <p className="font-bold text-lg text-ink tabular-nums">{money(item.price)}</p>
               </div>
               {installments && (
                 <div className="bg-surface-2 p-3 rounded-xl border border-line">
@@ -217,7 +251,9 @@ export function ItemModal() {
             {item.notes && (
               <div>
                 <p className="text-[0.65rem] font-bold text-muted uppercase tracking-wider mb-2">Notas</p>
-                <p className="text-sm text-ink-soft bg-surface-2 p-3 rounded-xl border border-line whitespace-pre-wrap">{item.notes}</p>
+                <p className="text-sm text-ink-soft bg-surface-2 p-3 rounded-xl border border-line whitespace-pre-wrap">
+                  {item.notes}
+                </p>
               </div>
             )}
 
@@ -228,7 +264,7 @@ export function ItemModal() {
                   {(item.storeName || item.storeLocation) && (
                     <p className="text-sm text-ink flex items-center gap-2">
                       <Icon name="store" size={16} className="text-muted" />
-                      {item.storeName} {item.storeLocation ? `· ${item.storeLocation}` : ''}
+                      {[item.storeName, item.storeLocation].filter(Boolean).join(' · ')}
                     </p>
                   )}
                   {item.orderNumber && (
@@ -238,13 +274,21 @@ export function ItemModal() {
                     </p>
                   )}
                   {item.purchaseUrl && (
-                    <a href={item.purchaseUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-accent hover:underline flex items-center gap-2 w-fit">
+                    <a
+                      href={item.purchaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-accent hover:underline flex items-center gap-2 w-fit"
+                    >
                       <Icon name="globe" size={16} /> Ir al sitio web
                     </a>
                   )}
                 </div>
               </div>
             )}
+
+            {/* COMPARADOR DE OPCIONES, TIENDAS Y MODELOS */}
+            <OptionComparator item={item} />
           </div>
         </div>
       </div>

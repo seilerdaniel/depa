@@ -11,13 +11,18 @@
     "fs:allow-mkdir",
     "fs:allow-write-file",
     "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
     "fs:allow-remove",
     "fs:allow-exists",
     {
       "identifier": "fs:scope",
       "allow": [
         { "path": "$APPLOCALDATA/images" },
-        { "path": "$APPLOCALDATA/images/**" }
+        { "path": "$APPLOCALDATA/images/**" },
+        { "path": "$APPLOCALDATA/backups" },
+        { "path": "$APPLOCALDATA/backups/**" }
       ]
     }
   ]

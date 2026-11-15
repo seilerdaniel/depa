@@ -242,7 +242,7 @@ function Shell() {
                 <button
                   type="button"
                   onClick={jumpToNewMovement}
-                  className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-5 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99]"
+                  className="inline-flex min-h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-accent-on shadow-sm transition-all hover:brightness-110 active:scale-[0.99]"
                 >
                   <Icon name="plus" size={17} />
                   Nuevo movimiento

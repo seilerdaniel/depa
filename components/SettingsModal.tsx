@@ -1,14 +1,17 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   useData, useFinance, usePrefs, useToast, useUI, type Theme,
 } from '@/state/AppProvider';
 import {
-  CARD_COLOR_OPTIONS, CARD_SURFACE_OPTIONS, DEFAULT_PREFS, HOME_ICON_NAMES,
-  HOME_LAYOUT_OPTIONS, HOME_MODULES, START_VIEW_OPTIONS, createDefaultHomeCards,
+  CARD_COLOR_OPTIONS, CARD_SURFACE_OPTIONS, DEFAULT_ITEM_FIELDS, DEFAULT_PREFS,
+  HOME_ICON_NAMES, HOME_LAYOUT_OPTIONS, HOME_MODULES, ITEM_FIELD_OPTIONS,
+  START_VIEW_OPTIONS, createDefaultHomeCards,
 } from '@/lib/config';
 import { money, parsePrice } from '@/lib/utils';
+import { isTauri } from '@/lib/nativeImages';
+import { listAutoBackups, type AutoBackupEntry } from '@/lib/autoBackup';
 import { ACCENT_THEMES } from './homeCardTheme';
 import type { CardAccentColor, HomeCardConfig, HomeLayout, HomeModuleId } from '@/lib/types';
 import { Icon } from './Icon';
@@ -67,8 +70,24 @@ function formatLastBackup(iso: string | null): string {
   }).format(new Date(ts));
 }
 
+const AUTO_BACKUP_DATE = new Intl.DateTimeFormat('es-AR', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function formatAutoBackupDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'Fecha desconocida';
+  return `${AUTO_BACKUP_DATE.format(new Date(timestamp))} hs`;
+}
+
 export function SettingsModal() {
-  const { items, categories, exportData, importData } = useData();
+  const {
+    items, categories, exportData, importData,
+    triggerManualLocalBackup, restoreLocalBackup,
+  } = useData();
   const { accounts, transactions, savingsGoals } = useFinance();
   const { prefs, setPrefs } = usePrefs();
   const {
@@ -80,6 +99,13 @@ export function SettingsModal() {
   const [expanded, setExpanded] = useState<HomeModuleId | null>(null);
   const [budgetInput, setBudgetInput] = useState('');
   const [lastBackup, setLastBackup] = useState<string | null>(null);
+
+  // ----- RESPALDOS AUTOMÁTICOS LOCALES -----
+  const [inTauri, setInTauri] = useState(false);
+  const [localBackups, setLocalBackups] = useState<AutoBackupEntry[]>([]);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [confirmRestoreName, setConfirmRestoreName] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -142,6 +168,26 @@ export function SettingsModal() {
     };
   }, [isSettingsOpen, setSettingsOpen]);
 
+  const refreshLocalBackups = useCallback(async () => {
+    setLoadingBackups(true);
+    try {
+      setLocalBackups(await listAutoBackups());
+    } finally {
+      setLoadingBackups(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setInTauri(isTauri());
+  }, []);
+
+  // Al abrir la pestaña de datos se releen las copias en disco.
+  useEffect(() => {
+    if (!isSettingsOpen || tab !== 'data') return;
+    setConfirmRestoreName(null);
+    void refreshLocalBackups();
+  }, [isSettingsOpen, tab, refreshLocalBackups]);
+
   if (!isSettingsOpen) return null;
 
   const updateCard = (id: HomeModuleId, patch: Partial<HomeCardConfig>) => {
@@ -199,6 +245,28 @@ export function SettingsModal() {
     setCategoryManagerOpen(true);
   };
 
+  const handleManualBackup = async () => {
+    setBackingUp(true);
+    const ok = await triggerManualLocalBackup();
+    setBackingUp(false);
+    if (ok) await refreshLocalBackups();
+  };
+
+  const handleRestoreBackup = async (fileName: string) => {
+    if (confirmRestoreName !== fileName) {
+      setConfirmRestoreName(fileName);
+      return;
+    }
+
+    setConfirmRestoreName(null);
+    const ok = await restoreLocalBackup(fileName);
+
+    if (ok) {
+      setLocalBackups(await listAutoBackups());
+      setSettingsOpen(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm sm:p-6"
@@ -211,8 +279,7 @@ export function SettingsModal() {
         aria-labelledby={titleId}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        style={{ maxHeight: 'calc(100vh - 2.5rem)' }}
-        className="flex w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-2xl outline-none"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-2xl outline-none"
       >
         {/* CABECERA FIJA */}
         <div className="shrink-0 border-b border-line bg-surface-2/50 px-5 pt-3.5 pb-3">
@@ -267,7 +334,7 @@ export function SettingsModal() {
         </div>
 
         {/* CUERPO SCROLLEABLE */}
-        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain p-5">
           {tab === 'general' && (
             <>
               {/* APARIENCIA */}
@@ -443,6 +510,69 @@ export function SettingsModal() {
                     <Icon name="edit" size={14} />
                     Administrar
                   </button>
+                </div>
+              </section>
+
+              {/* MIS COMPRAS · CAMPOS DEL FORMULARIO */}
+              <section aria-labelledby={`${titleId}-item-fields`}>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3
+                    id={`${titleId}-item-fields`}
+                    className="text-[0.7rem] font-bold uppercase tracking-wider text-muted"
+                  >
+                    Mis Compras · Campos del formulario
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setPrefs({ itemFields: { ...DEFAULT_ITEM_FIELDS } })}
+                    className="cursor-pointer text-[0.68rem] font-semibold text-accent-ink hover:underline"
+                  >
+                    Marcar todos
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  Elegí qué datos querés completar al agregar o editar un artículo. Nombre, precio y categoría siempre están activos.
+                </p>
+
+                <div className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {ITEM_FIELD_OPTIONS.map((field) => {
+                    const checked = prefs.itemFields?.[field.key] ?? true;
+                    const toggleField = () => {
+                      setPrefs({
+                        itemFields: {
+                          ...DEFAULT_ITEM_FIELDS,
+                          ...prefs.itemFields,
+                          [field.key]: !checked,
+                        },
+                      });
+                    };
+
+                    return (
+                      <label
+                        key={field.key}
+                        className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition-colors ${
+                          checked
+                            ? 'border-accent/40 bg-accent-soft/30'
+                            : 'border-line bg-surface-2/40 hover:border-line-strong'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={toggleField}
+                          className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-line-strong accent-accent"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-bold text-ink">
+                            {field.label}
+                          </span>
+                          <span className="mt-0.5 block text-[0.68rem] leading-tight text-muted">
+                            {field.hint}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
               </section>
             </>
@@ -661,7 +791,7 @@ export function SettingsModal() {
                               <legend className="mb-2 text-[0.68rem] font-bold uppercase tracking-wider text-muted">
                                 Ícono
                               </legend>
-                              <div className="flex flex-wrap gap-1.5">
+                              <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
                                 {HOME_ICON_NAMES.map((name) => {
                                   const selected = card.icon === name;
                                   return (
@@ -672,7 +802,7 @@ export function SettingsModal() {
                                       aria-pressed={selected}
                                       title={name}
                                       onClick={() => updateCard(module.id, { icon: name })}
-                                      className={`grid h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-xl border transition-colors ${
+                                      className={`grid h-10 w-10 cursor-pointer place-items-center rounded-xl border transition-colors ${
                                         selected
                                           ? 'border-accent bg-accent-soft text-accent-ink'
                                           : 'border-line bg-surface text-muted hover:border-line-strong hover:text-ink'
@@ -750,8 +880,8 @@ export function SettingsModal() {
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-ink">Restaurar desde archivo</p>
                   <p className="mt-0.5 text-xs text-muted">
-                    Reemplaza los datos actuales por los de un backup anterior (compatible con v1,
-                    v2 y v3).
+                    Reemplaza los datos actuales por los de un backup anterior (compatible con v1
+                    a v4).
                   </p>
                 </div>
                 <button
@@ -769,6 +899,86 @@ export function SettingsModal() {
                   onChange={handleImportFile}
                   className="hidden"
                 />
+              </div>
+
+              {/* RESPALDOS AUTOMÁTICOS LOCALES */}
+              <div className="rounded-2xl border border-line bg-surface-2/40 p-4">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-ink">Respaldos automáticos locales</p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Se conservan automáticamente las últimas 5 copias en la carpeta local de
+                      DEPA.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleManualBackup()}
+                    disabled={!inTauri || backingUp}
+                    className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 py-2.5 text-xs font-bold text-ink transition-colors hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Icon name="archive" size={16} />
+                    {backingUp ? 'Guardando…' : 'Respaldar ahora'}
+                  </button>
+                </div>
+
+                {!inTauri ? (
+                  <p className="mt-3 rounded-xl border border-line bg-surface px-3 py-2 text-[0.7rem] text-muted">
+                    Los respaldos automáticos sólo están disponibles en la app de escritorio.
+                  </p>
+                ) : loadingBackups ? (
+                  <p className="mt-3 text-[0.7rem] text-muted">Buscando copias en disco…</p>
+                ) : localBackups.length === 0 ? (
+                  <p className="mt-3 rounded-xl border border-dashed border-line px-3 py-3 text-[0.7rem] text-muted">
+                    Todavía no hay copias automáticas. Se crean al abrir la app y al guardar
+                    cambios.
+                  </p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-line/60 overflow-hidden rounded-xl border border-line bg-surface">
+                    {localBackups.map((entry, index) => {
+                      const confirming = confirmRestoreName === entry.fileName;
+
+                      return (
+                        <li
+                          key={entry.fileName}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
+                        >
+                          <div className="min-w-0">
+                            <p className="flex flex-wrap items-center gap-2 text-xs font-semibold text-ink">
+                              {formatAutoBackupDate(entry.timestamp)}
+                              {index === 0 && (
+                                <span className="rounded-full bg-low-soft px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-wide text-low">
+                                  Más reciente
+                                </span>
+                              )}
+                            </p>
+                            <p className="mt-0.5 truncate font-mono text-[0.62rem] text-muted">
+                              {entry.fileName}
+                            </p>
+                            {confirming && (
+                              <p className="mt-1 text-[0.65rem] font-semibold text-danger">
+                                ¿Restaurar esta copia? Se reemplazan los datos actuales.
+                              </p>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleRestoreBackup(entry.fileName)}
+                            className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[0.7rem] font-bold transition-colors ${
+                              confirming
+                                ? 'border-danger/40 bg-danger-soft text-danger'
+                                : 'border-line bg-surface text-muted hover:border-line-strong hover:text-ink'
+                            }`}
+                          >
+                            <Icon name={confirming ? 'check' : 'history'} size={13} />
+                            {confirming ? 'Confirmar' : 'Restaurar'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </section>
           )}

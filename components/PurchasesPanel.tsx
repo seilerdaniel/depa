@@ -200,7 +200,7 @@ export function PurchasesPanel() {
         <button
           type="button"
           onClick={startNewPurchase}
-          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-5 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99] sm:w-auto"
+          className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-accent-on shadow-sm transition-all hover:brightness-110 active:scale-[0.99] sm:w-auto"
         >
           <Icon name="plus" size={17} />
           Nueva compra

@@ -6,6 +6,7 @@ import { money } from '@/lib/utils';
 import type { Transaction, TransactionType } from '@/lib/types';
 import { Icon } from './Icon';
 import { ExpenseChart } from './ExpenseChart';
+import { CashflowForecast } from './CashflowForecast';
 import { FinanceSection } from './FinanceSection';
 
 const dateFormatter = new Intl.DateTimeFormat('es-AR', {
@@ -158,6 +159,10 @@ export function FinanceDashboard() {
 
       <div className="mt-4">
         <ExpenseChart />
+      </div>
+
+      <div className="mt-4">
+        <CashflowForecast />
       </div>
 
       <FinanceSection />

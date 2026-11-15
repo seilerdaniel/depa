@@ -8,19 +8,24 @@ import { arrayMove } from '@dnd-kit/sortable';
 import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
-  loadAccounts, saveAccounts, loadTransactions, saveTransactions,
-  loadSavingsGoals, saveSavingsGoals,
+  loadAccounts, loadTransactions, loadSavingsGoals, loadRecurringExpenses, saveAllState,
 } from '@/lib/storage';
 import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
 import {
   createId, normalizeLabel, normalizeItem, normalizeAccount, normalizeTransaction,
   normalizeSavingsGoal, pruneTransactions, roundMoney, sameText, normalizeMonth,
-  currentMonthKey, normalizePrefs,
+  currentMonthKey, normalizePrefs, normalizeBillingDay, normalizeRecurringExpense,
 } from '@/lib/utils';
-import type { Account, Item, Prefs, SavingsGoal, Transaction, View } from '@/lib/types';
+import type {
+  Account, Item, Prefs, RecurringExpense, SavingsGoal, Transaction, View,
+} from '@/lib/types';
 import {
   isTauri, isLocalImageRef, persistImageToDisk, readDiskImageAsDataUrl,
+  deleteDiskImage,
 } from '@/lib/nativeImages';
+import {
+  listAutoBackups, readAutoBackupContent, runAutoBackup, MIN_BACKUP_INTERVAL_MS,
+} from '@/lib/autoBackup';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -37,6 +42,7 @@ interface AppState {
   accounts: Account[];
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
+  recurringExpenses: RecurringExpense[];
   view: View;
   ready: boolean;
   editingItem: Item | null;
@@ -66,6 +72,7 @@ type Action =
   | { type: 'update-account'; account: Account }
   | { type: 'delete-account'; id: string }
   | { type: 'add-transaction'; transaction: Transaction }
+  | { type: 'add-transactions-batch'; transactions: Transaction[] }
   | {
       /** Edición de metadatos: nunca toca monto, tipo ni cuentas. */
       type: 'update-transaction';
@@ -81,6 +88,17 @@ type Action =
       /** Positivo = aporte, negativo = retiro. */
       delta: number;
       /** Movimiento a registrar (null si no se vinculó cuenta). */
+      transaction: Transaction | null;
+    }
+  | { type: 'add-recurring'; expense: RecurringExpense }
+  | { type: 'update-recurring'; expense: RecurringExpense }
+  | { type: 'delete-recurring'; id: string }
+  | {
+      type: 'pay-recurring';
+      id: string;
+      /** Mes pagado en formato 'YYYY-MM'. */
+      paidMonth: string;
+      /** Movimiento a registrar (null si se pagó sin cuenta). */
       transaction: Transaction | null;
     };
 
@@ -110,12 +128,11 @@ const revertFromBalances = (accounts: Account[], t: Transaction): Account[] => {
 
 /**
  * Deshace el gasto que creó la compra de un artículo: revierte el saldo y
- * elimina la transacción vinculada. Un artículo sólo puede tener un gasto
- * generado por este flujo, pero filtramos por id por si hubiera duplicados.
+ * elimina la transacción vinculada.
  */
 const detachLinkedPurchases = (s: AppState, itemId: string) => {
   const linked = s.transactions.filter(
-    (t) => t.linkedItemId === itemId && t.type === 'gasto'
+    (t) => t.linkedItemId === itemId && t.type === 'gasto',
   );
 
   let accounts = s.accounts;
@@ -124,15 +141,14 @@ const detachLinkedPurchases = (s: AppState, itemId: string) => {
   return {
     accounts,
     transactions: s.transactions.filter(
-      (t) => !(t.linkedItemId === itemId && t.type === 'gasto')
+      (t) => !(t.linkedItemId === itemId && t.type === 'gasto'),
     ),
   };
 };
 
 /**
  * Al marcar una compra, la financiación necesita un mes de inicio para poder
- * calcular qué cuota va. Si el usuario no lo eligió en el formulario se usa el
- * mes planificado del artículo y, si tampoco hay, el mes actual.
+ * calcular qué cuota va.
  */
 const withInstallmentStart = (item: Item): Item => {
   const inst = item.installments;
@@ -175,7 +191,6 @@ const reducer = (s: AppState, a: Action): AppState => {
       const found = s.items.find((i) => i.id === a.id);
       if (!found) return s;
 
-      // Marcar dos veces lo mismo no debe duplicar el gasto.
       if (a.bought && found.bought) return s;
 
       const item = a.bought ? withInstallmentStart(found) : found;
@@ -185,13 +200,11 @@ const reducer = (s: AppState, a: Action): AppState => {
         return { ...s, ...detachLinkedPurchases(s, a.id), items };
       }
 
-      // Compra sin registrar en finanzas: sólo cambia el estado del artículo.
       if (!a.accountId) return { ...s, items };
 
       const account = s.accounts.find((acc) => acc.id === a.accountId);
       if (!account) return s;
 
-      // Si el artículo está en cuotas, el gasto es la cuota mensual; si no, el precio.
       const amount =
         item.installments && item.installments.count > 0 && item.installments.amount > 0
           ? item.installments.amount
@@ -217,12 +230,8 @@ const reducer = (s: AppState, a: Action): AppState => {
       };
     }
     case 'restore-purchases': {
-      // Si el artículo ya no existe (se borró dentro de la ventana del toast),
-      // no resucitamos plata sin compra: no-op.
       if (!s.items.some((i) => i.id === a.itemId)) return s;
 
-      // Deshacer un "desmarcar comprado": vuelven los gastos y los saldos
-      // exactamente como estaban, en un solo paso.
       let accounts = s.accounts;
       for (const transaction of a.transactions) {
         accounts = applyToBalances(accounts, transaction);
@@ -237,7 +246,6 @@ const reducer = (s: AppState, a: Action): AppState => {
     }
     case 'set-wishlist': {
       const current = s.items.find((i) => i.id === a.id);
-      // Mover a wishlist desmarca la compra: no debe quedar el gasto colgado.
       const reverted = a.wishlist && current?.bought ? detachLinkedPurchases(s, a.id) : null;
 
       return {
@@ -247,7 +255,7 @@ const reducer = (s: AppState, a: Action): AppState => {
         items: s.items.map((i) =>
           i.id === a.id
             ? { ...i, wishlist: a.wishlist, bought: a.wishlist ? false : i.bought }
-            : i
+            : i,
         ),
       };
     }
@@ -289,10 +297,8 @@ const reducer = (s: AppState, a: Action): AppState => {
       };
 
     case 'delete-account': {
-      // Borrar una cuenta borra sus movimientos, pero antes revierte el efecto
-      // que esos movimientos tuvieron sobre las OTRAS cuentas (transferencias).
       const affected = s.transactions.filter(
-        (t) => t.accountId === a.id || t.destinationAccountId === a.id
+        (t) => t.accountId === a.id || t.destinationAccountId === a.id,
       );
       const affectedIds = new Set(affected.map((t) => t.id));
 
@@ -313,9 +319,37 @@ const reducer = (s: AppState, a: Action): AppState => {
         transactions: [a.transaction, ...s.transactions],
       };
 
+    case 'add-transactions-batch': {
+      if (a.transactions.length === 0) return s;
+
+      // Un solo dispatch: se agrega el neto por cuenta en vez de recorrer el
+      // array de cuentas una vez por movimiento.
+      const deltas = new Map<string, number>();
+      const bump = (id: string, delta: number) =>
+        deltas.set(id, roundMoney((deltas.get(id) ?? 0) + delta));
+
+      for (const transaction of a.transactions) {
+        if (transaction.type === 'ingreso') {
+          bump(transaction.accountId, transaction.amount);
+        } else if (transaction.type === 'gasto') {
+          bump(transaction.accountId, -transaction.amount);
+        } else if (transaction.destinationAccountId) {
+          bump(transaction.accountId, -transaction.amount);
+          bump(transaction.destinationAccountId, transaction.amount);
+        }
+      }
+
+      return {
+        ...s,
+        accounts: s.accounts.map((account) => {
+          const delta = deltas.get(account.id);
+          return delta ? { ...account, balance: roundMoney(account.balance + delta) } : account;
+        }),
+        transactions: [...a.transactions, ...s.transactions],
+      };
+    }
+
     case 'update-transaction':
-      // Sólo metadatos. Si acá se colara un cambio de monto o de cuenta,
-      // los saldos quedarían desincronizados del historial.
       return {
         ...s,
         transactions: s.transactions.map((t) =>
@@ -367,7 +401,43 @@ const reducer = (s: AppState, a: Action): AppState => {
         ),
       };
 
-      // Aporte/retiro sin cuenta: sólo se mueve la meta, no la plata real.
+      if (!a.transaction) return next;
+
+      return {
+        ...next,
+        accounts: applyToBalances(next.accounts, a.transaction),
+        transactions: [a.transaction, ...next.transactions],
+      };
+    }
+
+    // ---------- GASTOS FIJOS ----------
+    case 'add-recurring':
+      return { ...s, recurringExpenses: [a.expense, ...s.recurringExpenses] };
+
+    case 'update-recurring':
+      return {
+        ...s,
+        recurringExpenses: s.recurringExpenses.map((e) =>
+          e.id === a.expense.id ? a.expense : e,
+        ),
+      };
+
+    case 'delete-recurring':
+      return {
+        ...s,
+        recurringExpenses: s.recurringExpenses.filter((e) => e.id !== a.id),
+      };
+
+    case 'pay-recurring': {
+      // Un único dispatch: el saldo, el movimiento y el mes pagado cambian
+      // juntos o no cambia nada.
+      const next: AppState = {
+        ...s,
+        recurringExpenses: s.recurringExpenses.map((e) =>
+          e.id === a.id ? { ...e, lastPaidMonth: a.paidMonth } : e,
+        ),
+      };
+
       if (!a.transaction) return next;
 
       return {
@@ -389,6 +459,7 @@ const initialState: AppState = {
   accounts: [],
   transactions: [],
   savingsGoals: [],
+  recurringExpenses: [],
   view: 'home',
   ready: false,
   editingItem: null,
@@ -418,16 +489,19 @@ export interface BackupExportData {
   accounts: Account[];
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
+  recurringExpenses: RecurringExpense[];
   version: number;
 }
 
 export interface BackupImportData {
-  items: unknown[];
+  /** Opcional a propósito: un JSON roto debe fallar con mensaje, no en tipos. */
+  items?: unknown[];
   categories?: string[];
-  prefs?: Prefs;
+  prefs?: unknown;
   accounts?: unknown[];
   transactions?: unknown[];
   savingsGoals?: unknown[];
+  recurringExpenses?: unknown[];
 }
 
 export interface DataValue {
@@ -445,6 +519,10 @@ export interface DataValue {
   deleteCategory: (name: string) => void;
   exportData: () => void;
   importData: (file: File) => void;
+  /** Respaldo local forzado (ignora el intervalo mínimo). */
+  triggerManualLocalBackup: () => Promise<boolean>;
+  /** Restaura una copia automática por nombre de archivo. */
+  restoreLocalBackup: (fileName: string) => Promise<boolean>;
 }
 
 export interface PrefsValue {
@@ -456,14 +534,13 @@ export interface FinanceValue {
   accounts: Account[];
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
+  recurringExpenses: RecurringExpense[];
   addAccount: (draft: Omit<Account, 'id' | 'createdAt'>) => boolean;
   updateAccount: (account: Account) => boolean;
   deleteAccount: (id: string) => void;
   addTransaction: (draft: Omit<Transaction, 'id'>) => boolean;
-  /**
-   * Editar categoría, notas y fecha de un movimiento.
-   * Monto, tipo y cuentas quedan fuera a propósito: son la base del saldo.
-   */
+  /** Alta atómica de varios movimientos; devuelve cuántos se importaron. */
+  addTransactionsBatch: (drafts: Array<Omit<Transaction, 'id'>>) => number;
   updateTransaction: (
     id: string,
     patch: { category: string; notes: string; date: number },
@@ -472,11 +549,19 @@ export interface FinanceValue {
   addSavingsGoal: (draft: Omit<SavingsGoal, 'id' | 'createdAt'>) => boolean;
   updateSavingsGoal: (goal: SavingsGoal) => boolean;
   deleteSavingsGoal: (id: string) => void;
-  /**
-   * Aporte atómico a una meta. `amount` positivo suma; negativo retira.
-   * Con `accountId` mueve el saldo real y registra el movimiento.
-   */
   contributeToGoal: (goalId: string, amount: number, accountId?: string | null) => boolean;
+  addRecurringExpense: (draft: Omit<RecurringExpense, 'id' | 'createdAt'>) => boolean;
+  updateRecurringExpense: (expense: RecurringExpense) => boolean;
+  deleteRecurringExpense: (id: string) => void;
+  /**
+   * Registra el pago del mes: movimiento (si hay cuenta) + `lastPaidMonth`
+   * en un solo dispatch.
+   */
+  payRecurringExpense: (
+    id: string,
+    accountId?: string | null,
+    customAmount?: number,
+  ) => boolean;
 }
 
 export interface UIValue {
@@ -490,10 +575,8 @@ export interface UIValue {
   setBuyPromptItemId: (id: string | null) => void;
   isCategoryManagerOpen: boolean;
   setCategoryManagerOpen: (open: boolean) => void;
-  /** Panel de configuración del Inicio (densidad y apariencia de las cards). */
   isSettingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  /** Formulario lateral de alta: colapsado libera ancho para la grilla. */
   itemFormOpen: boolean;
   setItemFormOpen: (open: boolean) => void;
   theme: Theme;
@@ -549,14 +632,6 @@ export const useToast = (): ToastValue => {
   return ctx;
 };
 
-/**
- * Medio de pago con el que se registró la compra de un artículo.
- *
- * - `null`: el artículo no está comprado, no corresponde mostrar nada.
- * - `'Pagado con <cuenta>'`: hay un gasto vinculado y la cuenta existe.
- * - `'Sin cuenta vinculada'`: se compró sin registrar en finanzas.
- * - `'Pagado con cuenta eliminada'`: el gasto sobrevivió a su cuenta.
- */
 export function usePurchasePayment(item: Pick<Item, 'id' | 'bought'>): string | null {
   const { transactions, accounts } = useFinance();
 
@@ -564,7 +639,7 @@ export function usePurchasePayment(item: Pick<Item, 'id' | 'bought'>): string | 
     if (!item.bought) return null;
 
     const linked = transactions.find(
-      (t) => t.linkedItemId === item.id && t.type === 'gasto'
+      (t) => t.linkedItemId === item.id && t.type === 'gasto',
     );
     if (!linked) return 'Sin cuenta vinculada';
 
@@ -593,8 +668,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // La preferencia se lee después de montar: el script del layout ya aplicó
-  // la clase antes de hidratar, así que no hay destello ni mismatch de SSR.
   useEffect(() => {
     try {
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -609,25 +682,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Timers y refs
   const toastTimer = useRef<number | null>(null);
   const announceTimer = useRef<number | null>(null);
+  const imageCleanupTimers = useRef<Map<string, number>>(new Map());
 
-  // Marca que la hidratación inicial ya terminó: evita reescribir en disco
-  // los mismos megabytes de Base64 que acabamos de leer.
+  // Marca que la hidratación inicial ya terminó
   const hydrated = useRef(false);
 
-  // Debounce de prefs: guardamos sólo el último valor pendiente.
+  // Respaldo automático: arranque único y primer cambio ya contado
+  const autoBackupStarted = useRef(false);
+  const autoBackupHydrated = useRef(false);
+
+  // Debounce de prefs
   const prefsTimer = useRef<number | null>(null);
   const prefsPending = useRef<Prefs | null>(null);
 
-  // Espejo del estado para acciones que deben ser estables (exportData).
+  // Espejo del estado para acciones estables
   const stateRef = useRef(state);
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
+  // Limpiar timers pendientes al desmontar
+  useEffect(() => {
+    const timers = imageCleanupTimers.current;
+    return () => {
+      timers.forEach((timerId) => window.clearTimeout(timerId));
+      timers.clear();
+    };
+  }, []);
+
   // ==========================================
-  // FIX #1: UI / TOAST declarados ANTES de los useEffect de persistencia.
-  // Antes estaban más abajo, y el array de dependencias [.., showToast]
-  // del useEffect de "Persistencia de Items" los tocaba en TDZ.
+  // UI / TOAST
   // ==========================================
   const announce = useCallback((message: string) => {
     if (announceTimer.current) window.clearTimeout(announceTimer.current);
@@ -656,22 +740,69 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [hideToast]);
 
   // ==========================================
-  // EFECTOS DE CARGA Y PERSISTENCIA (ASYNC)
+  // RESPALDO AUTOMÁTICO LOCAL
+  // ==========================================
+  /**
+   * Único generador del payload de backup: lo comparten la exportación manual
+   * y los snapshots silenciosos, así nunca divergen.
+   */
+  const buildBackupPayload = useCallback(async (): Promise<BackupExportData> => {
+    const snapshot = stateRef.current;
+
+    // Las imágenes locales viajan como DataURL: la copia se puede restaurar
+    // incluso si los archivos originales ya no están en disco.
+    const items = await Promise.all(
+      snapshot.items.map(async (item) => {
+        if (!item.imageData || !isLocalImageRef(item.imageData)) return item;
+
+        const dataUrl = await readDiskImageAsDataUrl(item.imageData);
+        return dataUrl ? { ...item, imageData: dataUrl } : item;
+      }),
+    );
+
+    return {
+      items,
+      categories: snapshot.categories,
+      prefs: snapshot.prefs,
+      accounts: snapshot.accounts,
+      transactions: snapshot.transactions,
+      savingsGoals: snapshot.savingsGoals,
+      recurringExpenses: snapshot.recurringExpenses,
+      version: 4,
+    };
+  }, []);
+
+  /** Escribe un respaldo silencioso. Nunca informa ni interrumpe la UI. */
+  const silentAutoBackup = useCallback(async () => {
+    try {
+      // Chequeo barato antes de serializar: las fotos locales se leen por IPC
+      // y no tiene sentido pagar ese costo si todavía no toca respaldar.
+      const [latest] = await listAutoBackups();
+      if (latest && Date.now() - latest.timestamp < MIN_BACKUP_INTERVAL_MS) return;
+
+      const payload = await buildBackupPayload();
+      await runAutoBackup(JSON.stringify(payload));
+    } catch (error) {
+      console.warn('Respaldo automático omitido.', error);
+    }
+  }, [buildBackupPayload]);
+
+  // ==========================================
+  // EFECTOS DE CARGA Y PERSISTENCIA (ASYNC EN SQLITE)
   // ==========================================
   useEffect(() => {
     let mounted = true;
     async function initDB() {
-      // 1. Cargas asíncronas desde SQLite
-      const [items, categories, accounts, rawTransactions, savingsGoals] = await Promise.all([
-        loadItems(),
-        loadCategories(),
-        loadAccounts(),
-        loadTransactions(),
-        loadSavingsGoals(),
-      ]);
-
-      // 2. Carga síncrona desde localStorage
-      const prefs = loadPrefs();
+      const [items, categories, accounts, rawTransactions, savingsGoals, recurringExpenses, prefs] =
+        await Promise.all([
+          loadItems(),
+          loadCategories(),
+          loadAccounts(),
+          loadTransactions(),
+          loadSavingsGoals(),
+          loadRecurringExpenses(),
+          loadPrefs(),
+        ]);
 
       if (!mounted) return;
 
@@ -681,17 +812,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         saveCategories(categories).catch(console.error);
       }
 
-      // ==========================================
       // MIGRACIÓN 4.1: Base64 heredado → archivo en disco
-      // ==========================================
-      // Los artículos viejos guardaban la foto entera en SQLite. Se escribe
-      // una vez en disco y se reemplaza el Base64 por `local-img://...`.
       let loadedItems = items;
 
       if (isTauri()) {
         const migrated = await Promise.all(
           items.map(async (item) => {
-            if (!item.imageData.startsWith('data:image/')) return item;
+            if (!item.imageData?.startsWith('data:image/')) return item;
 
             const stored = await persistImageToDisk(item.imageData, item.id);
             return stored === item.imageData ? item : { ...item, imageData: stored };
@@ -702,8 +829,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (changed) {
           loadedItems = migrated;
-          // Persistimos ya: el effect de guardado se salta la primera pasada
-          // para no reescribir todo lo que se acaba de leer.
           saveItems(migrated).catch(console.error);
         }
       }
@@ -717,6 +842,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           accounts,
           transactions,
           savingsGoals,
+          recurringExpenses,
           view: prefs.startView,
         },
       });
@@ -726,45 +852,87 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { mounted = false; };
   }, []);
 
-  // ==========================================
-  // PERSISTENCIA UNIFICADA EN SQLITE
-  // ==========================================
+  // Persistencia serializada en SQLite
   useEffect(() => {
     if (!state.ready) return;
 
-    // Evitamos guardar inmediatamente después de cargar la base de datos
     if (!hydrated.current) {
       hydrated.current = true;
       return;
     }
 
-    // El orden importa: primero las entidades "padre" (artículos, categorías,
-    // cuentas y metas) y recién después las transacciones. Si un import de
-    // backup insertara un movimiento antes que su cuenta, SQLite lo rechazaría
-    // por Foreign Key y el backup quedaría a medias.
     void (async () => {
-      try {
-        const parents = await Promise.all([
-          saveItems(state.items),
-          saveCategories(state.categories),
-          saveAccounts(state.accounts),
-          saveSavingsGoals(state.savingsGoals),
-        ]);
+      const res = await saveAllState({
+        items: state.items,
+        categories: state.categories,
+        accounts: state.accounts,
+        savingsGoals: state.savingsGoals,
+        recurringExpenses: state.recurringExpenses,
+        transactions: state.transactions,
+      });
 
-        const txRes = await saveTransactions(state.transactions);
-
-        const hasError = [...parents, txRes].some((r) => r && !r.success);
-        if (hasError) {
-          console.error('🔥 Error guardando en SQLite. Revisa las transacciones.');
-        }
-      } catch (error) {
-        console.error('🔥 Error inesperado guardando en SQLite.', error);
+      if (!res.success) {
+        console.error('Error guardando en SQLite:', res.error);
+        showToast('Error al guardar cambios en la base de datos local.');
       }
     })();
+  }, [
+    state.items,
+    state.categories,
+    state.accounts,
+    state.transactions,
+    state.savingsGoals,
+    state.recurringExpenses,
+    state.ready,
+    showToast,
+  ]);
 
-  }, [state.items, state.categories, state.accounts, state.transactions, state.savingsGoals, state.ready]);
+  // Respaldo automático de arranque: 3 s para no competir con la hidratación.
+  useEffect(() => {
+    if (!state.ready || autoBackupStarted.current) return;
 
-  // Debounce de Prefs (Sincrónico en LocalStorage)
+    if (!isTauri()) {
+      autoBackupStarted.current = true;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      // La marca se pone al disparar: así un remount de StrictMode no lo cancela.
+      autoBackupStarted.current = true;
+      void silentAutoBackup();
+    }, 3000);
+
+    return () => window.clearTimeout(timer);
+  }, [state.ready, silentAutoBackup]);
+
+  // Respaldo con debounce: 15 s después del último cambio persistido.
+  // `runAutoBackup` aplica además el mínimo de 30 minutos entre copias.
+  useEffect(() => {
+    if (!state.ready || !isTauri()) return;
+
+    // El primer render post-hidratación no cuenta como "cambio".
+    if (!autoBackupHydrated.current) {
+      autoBackupHydrated.current = true;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void silentAutoBackup();
+    }, 15_000);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    state.items,
+    state.categories,
+    state.accounts,
+    state.transactions,
+    state.savingsGoals,
+    state.recurringExpenses,
+    state.ready,
+    silentAutoBackup,
+  ]);
+
+  // Debounce de Prefs en SQLite
   useEffect(() => {
     if (!state.ready) return;
 
@@ -774,7 +942,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     prefsTimer.current = window.setTimeout(() => {
       prefsTimer.current = null;
       if (prefsPending.current) {
-        savePrefs(prefsPending.current);
+        void savePrefs(prefsPending.current);
         prefsPending.current = null;
       }
     }, 300);
@@ -787,11 +955,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [state.prefs, state.ready]);
 
-  // Flush al cerrar / ocultar la pestaña
+  // Flush al cerrar / ocultar la ventana
   useEffect(() => {
     const flush = () => {
       if (prefsPending.current) {
-        savePrefs(prefsPending.current);
+        void savePrefs(prefsPending.current);
         prefsPending.current = null;
       }
     };
@@ -819,10 +987,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (theme === 'system' &&
           window.matchMedia('(prefers-color-scheme: dark)').matches);
       root.classList.toggle('dark', isDark);
-
-      // `color-scheme` es lo que hace que los controles NATIVOS de Windows
-      // (selects, inputs date/month, scrollbars) se pinten acordes al tema.
-      // Sin esto, el modo oscuro deja destellos blancos al abrirlos.
       root.style.colorScheme = isDark ? 'dark' : 'light';
     };
 
@@ -836,15 +1000,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   // ==========================================
-  // FIX #2: SERVICE WORKER (PWA) — useEffect CERRADO correctamente con }, []);
-  // En la versión original faltaba el cierre y todo el componente quedaba
-  // dentro del callback (de ahí el error "() => JSX.Element | undefined").
+  // SERVICE WORKER (Solo web, bloqueado en Tauri)
   // ==========================================
   useEffect(() => {
-    // WebView2 no debe cachear un bundle viejo tras recompilar el .exe:
-    // en Tauri ni siquiera registramos el Service Worker.
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) return;
-
     if (!('serviceWorker' in navigator)) return;
 
     const register = () => {
@@ -878,46 +1037,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [announce, showToast]);
 
   const updateItem = useCallback<DataValue['updateItem']>((item) => {
+    const previous = stateRef.current.items.find((i) => i.id === item.id);
     dispatch({ type: 'update', item });
+
+    // Si reemplazó o quitó una foto local en disco, eliminamos la anterior
+    if (
+      isTauri() &&
+      previous?.imageData &&
+      isLocalImageRef(previous.imageData) &&
+      previous.imageData !== item.imageData
+    ) {
+      void deleteDiskImage(previous.imageData).catch(console.warn);
+    }
+
     announce(`${item.name} actualizado`);
     showToast('Artículo actualizado correctamente');
   }, [announce, showToast]);
 
   const removeItem = useCallback<DataValue['removeItem']>((id) => {
-    const index = state.items.findIndex((i) => i.id === id);
+    const index = stateRef.current.items.findIndex((i) => i.id === id);
     if (index === -1) return;
-    const removed = state.items[index];
+    const removed = stateRef.current.items[index];
 
     dispatch({ type: 'remove', id });
+
+    // Programamos la limpieza de la imagen en disco una vez vencida la ventana de Deshacer
+    if (isTauri() && removed.imageData && isLocalImageRef(removed.imageData)) {
+      const imageRef = removed.imageData;
+      const timerId = window.setTimeout(() => {
+        imageCleanupTimers.current.delete(id);
+        const stillExists = stateRef.current.items.some((i) => i.imageData === imageRef);
+        if (!stillExists) {
+          void deleteDiskImage(imageRef).catch(console.warn);
+        }
+      }, 7500);
+      imageCleanupTimers.current.set(id, timerId);
+    }
+
     showToast(`"${removed.name}" eliminado`, {
       actionLabel: 'Deshacer',
       onAction: () => {
+        const pendingCleanup = imageCleanupTimers.current.get(id);
+        if (pendingCleanup !== undefined) {
+          window.clearTimeout(pendingCleanup);
+          imageCleanupTimers.current.delete(id);
+        }
         dispatch({
           type: 'restore',
           item: removed,
-          index: Math.min(index, state.items.length - 1),
+          index: Math.min(index, stateRef.current.items.length),
         });
         announce(`${removed.name} restaurado en la lista`);
       },
     });
-  }, [state.items, showToast, announce]);
+  }, [showToast, announce]);
 
   const toggleBought = useCallback<DataValue['toggleBought']>((id, bought, accountId) => {
-    const item = state.items.find((i) => i.id === id);
+    const current = stateRef.current;
+    const item = current.items.find((i) => i.id === id);
     if (!item) return;
 
-    // Al comprar con cuentas disponibles, primero preguntamos el medio de pago.
-    // `accountId === null` explícito significa "sin registrar en finanzas".
-    if (bought && accountId === undefined && state.accounts.length > 0) {
+    if (bought && accountId === undefined && current.accounts.length > 0) {
       dispatch({ type: 'set-buy-prompt', id });
       return;
     }
 
-    // Copiamos los gastos vinculados ANTES del dispatch: el reducer los elimina
-    // y sin esta copia no habría nada que restaurar.
     const reverted = bought
       ? []
-      : state.transactions.filter((t) => t.linkedItemId === id && t.type === 'gasto');
+      : current.transactions.filter((t) => t.linkedItemId === id && t.type === 'gasto');
 
     dispatch({ type: 'toggle-bought', id, bought, accountId: accountId ?? null });
     announce(`${item.name} marcado como ${bought ? 'comprado' : 'pendiente'}`);
@@ -927,8 +1114,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Desmarcar una compra con gasto vinculado borra movimientos y revierte
-    // saldos. Es destructivo, así que damos 7 segundos para volver atrás.
     if (!bought && reverted.length > 0) {
       showToast(`"${item.name}" vuelve a pendiente`, {
         actionLabel: 'Deshacer',
@@ -938,13 +1123,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         },
       });
     }
-  }, [state.items, state.accounts, state.transactions, announce, showToast]);
+  }, [announce, showToast]);
 
   const setWishlist = useCallback<DataValue['setWishlist']>((id, wishlist) => {
-    const item = state.items.find((i) => i.id === id);
+    const current = stateRef.current;
+    const item = current.items.find((i) => i.id === id);
     if (!item || item.wishlist === wishlist) return false;
 
     const prev = { wishlist: item.wishlist, bought: item.bought };
+    const revertedPurchases =
+      wishlist && item.bought
+        ? current.transactions.filter((t) => t.linkedItemId === id && t.type === 'gasto')
+        : [];
+
     dispatch({ type: 'set-wishlist', id, wishlist });
 
     const msg = wishlist
@@ -955,31 +1146,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
       actionLabel: 'Deshacer',
       onAction: () => {
         dispatch({ type: 'set-wishlist', id, wishlist: prev.wishlist });
-        if (prev.bought) dispatch({ type: 'toggle-bought', id, bought: true });
+        if (prev.bought) {
+          if (revertedPurchases.length > 0) {
+            dispatch({ type: 'restore-purchases', itemId: id, transactions: revertedPurchases });
+          } else {
+            dispatch({ type: 'toggle-bought', id, bought: true, accountId: null });
+          }
+        }
       },
     });
     return true;
-  }, [state.items, announce, showToast]);
+  }, [announce, showToast]);
 
   const setPrefs = useCallback<PrefsValue['setPrefs']>((patch) => {
     dispatch({ type: 'set-prefs', patch });
   }, []);
 
   const addCategory = useCallback<DataValue['addCategory']>((name) => {
-    if (state.categories.some((c) => c.toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) return false;
+    if (stateRef.current.categories.some((c) => c.toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) {
+      return false;
+    }
     dispatch({ type: 'add-category', name });
     return true;
-  }, [state.categories]);
+  }, []);
 
   const updateCategory = useCallback<DataValue['updateCategory']>((oldName, newName) => {
     const trimmed = normalizeLabel(newName, CATEGORY_MAX_LENGTH);
     if (!trimmed || trimmed === oldName) return false;
-    if (state.categories.some((c) => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) return false;
+    if (stateRef.current.categories.some((c) => c.toLocaleLowerCase('es') === trimmed.toLocaleLowerCase('es'))) {
+      return false;
+    }
 
     dispatch({ type: 'update-category', oldName, newName: trimmed });
     showToast('Categoría actualizada');
     return true;
-  }, [state.categories, showToast]);
+  }, [showToast]);
 
   const deleteCategory = useCallback<DataValue['deleteCategory']>((name) => {
     dispatch({ type: 'delete-category', name });
@@ -1003,13 +1204,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reorderItems = useCallback<DataValue['reorderItems']>((activeId, overId) => {
-    const oldIndex = state.items.findIndex((i) => i.id === activeId);
-    const newIndex = state.items.findIndex((i) => i.id === overId);
+    const items = stateRef.current.items;
+    const oldIndex = items.findIndex((i) => i.id === activeId);
+    const newIndex = items.findIndex((i) => i.id === overId);
     if (oldIndex !== -1 && newIndex !== -1) {
-      const newItems = arrayMove(state.items, oldIndex, newIndex);
+      const newItems = arrayMove(items, oldIndex, newIndex);
       dispatch({ type: 'reorder-items', items: newItems });
     }
-  }, [state.items]);
+  }, []);
 
   // ==========================================
   // ACCIONES DE FINANZAS
@@ -1017,7 +1219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addAccount = useCallback<FinanceValue['addAccount']>((draft) => {
     const name = normalizeLabel(draft.name, 60);
     if (!name) return false;
-    if (state.accounts.some((a) => sameText(a.name, name))) return false;
+    if (stateRef.current.accounts.some((a) => sameText(a.name, name))) return false;
 
     const account: Account = {
       id: createId(),
@@ -1025,6 +1227,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       type: draft.type,
       balance: Number.isFinite(draft.balance) ? roundMoney(draft.balance) : 0,
       color: normalizeLabel(draft.color, 20) || 'accent',
+      closingDay: draft.type === 'tarjeta' ? normalizeBillingDay(draft.closingDay) : null,
+      dueDay: draft.type === 'tarjeta' ? normalizeBillingDay(draft.dueDay) : null,
       createdAt: Date.now(),
     };
 
@@ -1032,15 +1236,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     announce(`Cuenta ${name} creada`);
     showToast('Cuenta creada');
     return true;
-  }, [state.accounts, announce, showToast]);
+  }, [announce, showToast]);
 
   const updateAccount = useCallback<FinanceValue['updateAccount']>((account) => {
-    const current = state.accounts.find((a) => a.id === account.id);
+    const accounts = stateRef.current.accounts;
+    const current = accounts.find((a) => a.id === account.id);
     if (!current) return false;
 
     const name = normalizeLabel(account.name, 60);
     if (!name) return false;
-    if (state.accounts.some((a) => a.id !== account.id && sameText(a.name, name))) return false;
+    if (accounts.some((a) => a.id !== account.id && sameText(a.name, name))) return false;
 
     const balance = Number(account.balance);
 
@@ -1051,22 +1256,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         name,
         type: account.type,
         color: normalizeLabel(account.color, 20) || current.color,
-        // Editar el saldo a mano desacopla la cuenta del historial de movimientos:
-        // se permite como ajuste, pero se sanea para que nunca quede NaN.
         balance: Number.isFinite(balance) ? roundMoney(balance) : current.balance,
+        // Al dejar de ser tarjeta los días dejan de existir: se limpian a null
+        // (no `undefined`) para que SQLite no conserve el valor anterior.
+        closingDay:
+          account.type === 'tarjeta' ? normalizeBillingDay(account.closingDay) : null,
+        dueDay: account.type === 'tarjeta' ? normalizeBillingDay(account.dueDay) : null,
       },
     });
 
     showToast('Cuenta actualizada');
     return true;
-  }, [state.accounts, showToast]);
+  }, [showToast]);
 
   const deleteAccount = useCallback<FinanceValue['deleteAccount']>((id) => {
-    const account = state.accounts.find((a) => a.id === id);
+    const current = stateRef.current;
+    const account = current.accounts.find((a) => a.id === id);
     if (!account) return;
 
-    const affected = state.transactions.filter(
-      (t) => t.accountId === id || t.destinationAccountId === id
+    const affected = current.transactions.filter(
+      (t) => t.accountId === id || t.destinationAccountId === id,
     ).length;
 
     dispatch({ type: 'delete-account', id });
@@ -1074,15 +1283,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showToast(
       affected > 0
         ? `Cuenta "${account.name}" eliminada junto con ${affected} movimiento${affected === 1 ? '' : 's'}.`
-        : `Cuenta "${account.name}" eliminada.`
+        : `Cuenta "${account.name}" eliminada.`,
     );
-  }, [state.accounts, state.transactions, announce, showToast]);
+  }, [announce, showToast]);
 
   const addTransaction = useCallback<FinanceValue['addTransaction']>((draft) => {
     const amount = roundMoney(Number(draft.amount));
     if (!Number.isFinite(amount) || amount <= 0) return false;
 
-    const accountIds = new Set(state.accounts.map((a) => a.id));
+    const accountIds = new Set(stateRef.current.accounts.map((a) => a.id));
     if (!accountIds.has(draft.accountId)) return false;
 
     let destinationAccountId: string | null = null;
@@ -1109,10 +1318,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     announce('Movimiento registrado');
     showToast('Movimiento registrado');
     return true;
-  }, [state.accounts, announce, showToast]);
+  }, [announce, showToast]);
 
-  const updateTransaction = useCallback<FinanceValue['updateTransaction']>((id, patch) => {
-    const current = state.transactions.find((t) => t.id === id);
+  const addTransactionsBatch = useCallback<FinanceValue['addTransactionsBatch']>((drafts) => {
+    const accountIds = new Set(stateRef.current.accounts.map((account) => account.id));
+    const valid: Transaction[] = [];
+
+    for (const draft of drafts) {
+      const amount = roundMoney(Number(draft.amount));
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      if (!accountIds.has(draft.accountId)) continue;
+
+      let destinationAccountId: string | null = null;
+
+      if (draft.type === 'transferencia') {
+        if (!draft.destinationAccountId) continue;
+        if (draft.destinationAccountId === draft.accountId) continue;
+        if (!accountIds.has(draft.destinationAccountId)) continue;
+        destinationAccountId = draft.destinationAccountId;
+      } else if (draft.type !== 'ingreso' && draft.type !== 'gasto') {
+        continue;
+      }
+
+      valid.push({
+        id: createId(),
+        accountId: draft.accountId,
+        destinationAccountId,
+        type: draft.type,
+        amount,
+        date: Number.isFinite(draft.date) ? draft.date : Date.now(),
+        category: normalizeLabel(draft.category, 40) || 'Otros',
+        notes: normalizeLabel(draft.notes, 250),
+        linkedItemId: draft.linkedItemId ?? null,
+        recurringExpenseId: draft.recurringExpenseId ?? null,
+      });
+    }
+
+    if (valid.length === 0) return 0;
+
+    dispatch({ type: 'add-transactions-batch', transactions: valid });
+    announce(`Se importaron ${valid.length} movimientos`);
+    showToast(`Se importaron ${valid.length} movimientos`);
+    return valid.length;
+  }, [announce, showToast]);
+
+  const updateTransaction = useCallback<FinanceValue['updateTransaction']>((id, patch) => {    const current = stateRef.current.transactions.find((t) => t.id === id);
     if (!current) return false;
 
     dispatch({
@@ -1128,15 +1378,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     announce('Movimiento actualizado');
     showToast('Movimiento actualizado');
     return true;
-  }, [state.transactions, announce, showToast]);
+  }, [announce, showToast]);
 
   const deleteTransaction = useCallback<FinanceValue['deleteTransaction']>((id) => {
-    if (!state.transactions.some((t) => t.id === id)) return;
+    if (!stateRef.current.transactions.some((t) => t.id === id)) return;
 
     dispatch({ type: 'delete-transaction', id });
     announce('Movimiento eliminado');
     showToast('Movimiento eliminado');
-  }, [state.transactions, announce, showToast]);
+  }, [announce, showToast]);
 
   // ==========================================
   // METAS DE AHORRO
@@ -1144,7 +1394,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addSavingsGoal = useCallback<FinanceValue['addSavingsGoal']>((draft) => {
     const name = normalizeLabel(draft.name, 60);
     if (!name) return false;
-    if (state.savingsGoals.some((g) => sameText(g.name, name))) return false;
+    if (stateRef.current.savingsGoals.some((g) => sameText(g.name, name))) return false;
 
     const target = roundMoney(Number(draft.targetAmount));
     const current = roundMoney(Number(draft.currentAmount));
@@ -1163,15 +1413,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     announce(`Meta ${name} creada`);
     showToast('Meta de ahorro creada');
     return true;
-  }, [state.savingsGoals, announce, showToast]);
+  }, [announce, showToast]);
 
   const updateSavingsGoal = useCallback<FinanceValue['updateSavingsGoal']>((goal) => {
-    const current = state.savingsGoals.find((g) => g.id === goal.id);
+    const goals = stateRef.current.savingsGoals;
+    const current = goals.find((g) => g.id === goal.id);
     if (!current) return false;
 
     const name = normalizeLabel(goal.name, 60);
     if (!name) return false;
-    if (state.savingsGoals.some((g) => g.id !== goal.id && sameText(g.name, name))) return false;
+    if (goals.some((g) => g.id !== goal.id && sameText(g.name, name))) return false;
 
     const target = roundMoney(Number(goal.targetAmount));
     const amount = roundMoney(Number(goal.currentAmount));
@@ -1182,7 +1433,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ...current,
         name,
         targetAmount: Number.isFinite(target) && target > 0 ? target : 0,
-        // Editar el acumulado a mano es un ajuste consciente: se permite.
         currentAmount: Number.isFinite(amount) && amount > 0 ? amount : 0,
         color: normalizeLabel(goal.color, 20) || current.color,
         deadline: normalizeDeadline(goal.deadline),
@@ -1191,21 +1441,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     showToast('Meta actualizada');
     return true;
-  }, [state.savingsGoals, showToast]);
+  }, [showToast]);
 
   const deleteSavingsGoal = useCallback<FinanceValue['deleteSavingsGoal']>((id) => {
-    const goal = state.savingsGoals.find((g) => g.id === id);
+    const goal = stateRef.current.savingsGoals.find((g) => g.id === id);
     if (!goal) return;
 
     dispatch({ type: 'delete-savings-goal', id });
     announce(`Meta ${goal.name} eliminada`);
-    // Los movimientos ya registrados quedan: son historia real de las cuentas.
     showToast(`Meta "${goal.name}" eliminada. Sus movimientos se conservan.`);
-  }, [state.savingsGoals, announce, showToast]);
+  }, [announce, showToast]);
 
   const contributeToGoal = useCallback<FinanceValue['contributeToGoal']>(
     (goalId, amount, accountId) => {
-      const goal = state.savingsGoals.find((g) => g.id === goalId);
+      const current = stateRef.current;
+      const goal = current.savingsGoals.find((g) => g.id === goalId);
       if (!goal) return false;
 
       const raw = Number(amount);
@@ -1215,18 +1465,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const isWithdrawal = raw < 0;
       if (isWithdrawal && goal.currentAmount <= 0) return false;
 
-      // Nunca se retira más de lo acumulado: la meta no puede quedar negativa.
       const effective = isWithdrawal ? Math.min(requested, goal.currentAmount) : requested;
 
       let transaction: Transaction | null = null;
       if (accountId) {
-        if (!state.accounts.some((a) => a.id === accountId)) return false;
+        if (!current.accounts.some((a) => a.id === accountId)) return false;
 
         transaction = {
           id: createId(),
           accountId,
           destinationAccountId: null,
-          // Aportar sale de la cuenta (gasto); retirar vuelve a la cuenta (ingreso).
           type: isWithdrawal ? 'ingreso' : 'gasto',
           amount: effective,
           date: Date.now(),
@@ -1251,7 +1499,103 @@ export function AppProvider({ children }: { children: ReactNode }) {
       );
       return true;
     },
-    [state.savingsGoals, state.accounts, announce, showToast],
+    [announce, showToast],
+  );
+
+  // ==========================================
+  // GASTOS FIJOS Y SERVICIOS DEL HOGAR
+  // ==========================================
+  const addRecurringExpense = useCallback<FinanceValue['addRecurringExpense']>((draft) => {
+    const name = normalizeLabel(draft.name, 60);
+    if (!name) return false;
+    if (stateRef.current.recurringExpenses.some((e) => sameText(e.name, name))) return false;
+
+    const expense = normalizeRecurringExpense({
+      ...draft,
+      id: createId(),
+      createdAt: Date.now(),
+    });
+    if (!expense) return false;
+
+    dispatch({ type: 'add-recurring', expense });
+    announce(`Servicio ${expense.name} creado`);
+    showToast('Gasto fijo creado');
+    return true;
+  }, [announce, showToast]);
+
+  const updateRecurringExpense = useCallback<FinanceValue['updateRecurringExpense']>((expense) => {
+    const list = stateRef.current.recurringExpenses;
+    const current = list.find((e) => e.id === expense.id);
+    if (!current) return false;
+
+    const name = normalizeLabel(expense.name, 60);
+    if (!name) return false;
+    if (list.some((e) => e.id !== expense.id && sameText(e.name, name))) return false;
+
+    // Normalizar acá evita que un formulario mal tipado ensucie la base.
+    const next = normalizeRecurringExpense({
+      ...current,
+      ...expense,
+      id: current.id,
+      createdAt: current.createdAt,
+    });
+    if (!next) return false;
+
+    dispatch({ type: 'update-recurring', expense: next });
+    showToast('Gasto fijo actualizado');
+    return true;
+  }, [showToast]);
+
+  const deleteRecurringExpense = useCallback<FinanceValue['deleteRecurringExpense']>((id) => {
+    const expense = stateRef.current.recurringExpenses.find((e) => e.id === id);
+    if (!expense) return;
+
+    dispatch({ type: 'delete-recurring', id });
+    announce(`Servicio ${expense.name} eliminado`);
+    showToast(`Servicio "${expense.name}" eliminado. Sus movimientos se conservan.`);
+  }, [announce, showToast]);
+
+  const payRecurringExpense = useCallback<FinanceValue['payRecurringExpense']>(
+    (id, accountId, customAmount) => {
+      const current = stateRef.current;
+      const expense = current.recurringExpenses.find((e) => e.id === id);
+      if (!expense) return false;
+
+      // La boleta real puede diferir del estimado (luz, gas, agua).
+      const raw = Number(customAmount);
+      const amount = roundMoney(
+        Number.isFinite(raw) && raw > 0 ? raw : expense.amount,
+      );
+      if (!Number.isFinite(amount) || amount <= 0) return false;
+
+      // `undefined` = usar la cuenta sugerida; `null` = pagar sin cuenta.
+      const targetAccount = accountId === undefined ? expense.accountId : accountId;
+
+      let transaction: Transaction | null = null;
+      if (targetAccount) {
+        if (!current.accounts.some((a) => a.id === targetAccount)) return false;
+
+        transaction = {
+          id: createId(),
+          accountId: targetAccount,
+          destinationAccountId: null,
+          type: 'gasto',
+          amount,
+          date: Date.now(),
+          category: expense.category,
+          notes: `Servicio: ${expense.name}`,
+          linkedItemId: null,
+          recurringExpenseId: expense.id,
+        };
+      }
+
+      dispatch({ type: 'pay-recurring', id, paidMonth: currentMonthKey(), transaction });
+
+      announce(`Pago de ${expense.name} registrado`);
+      showToast(`Servicio "${expense.name}" registrado`);
+      return true;
+    },
+    [announce, showToast],
   );
 
   // ==========================================
@@ -1259,28 +1603,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ==========================================
   const exportData = useCallback<DataValue['exportData']>(() => {
     void (async () => {
-      const snapshot = stateRef.current;
+      const data = await buildBackupPayload();
 
-      // El backup tiene que ser portable: las fotos que viven en disco se
-      // embeben como Base64 SÓLO en el JSON exportado (la base no se toca).
-      const items = await Promise.all(
-        snapshot.items.map(async (item) => {
-          if (!isLocalImageRef(item.imageData)) return item;
-
-          const dataUrl = await readDiskImageAsDataUrl(item.imageData);
-          return dataUrl ? { ...item, imageData: dataUrl } : item;
-        }),
-      );
-
-      const data: BackupExportData = {
-        items,
-        categories: snapshot.categories,
-        prefs: snapshot.prefs,
-        accounts: snapshot.accounts,
-        transactions: snapshot.transactions,
-        savingsGoals: snapshot.savingsGoals,
-        version: 3,
-      };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1290,6 +1614,109 @@ export function AppProvider({ children }: { children: ReactNode }) {
       URL.revokeObjectURL(url);
       showToast('Copia de seguridad descargada');
     })();
+  }, [buildBackupPayload, showToast]);
+
+  /** Misma validación para archivo importado y para copia local restaurada. */
+  const importPayload = useCallback(async (raw: unknown): Promise<boolean> => {
+    try {
+      const parsed = (raw ?? {}) as BackupImportData;
+
+      if (!Array.isArray(parsed.items)) {
+        throw new Error('Formato de archivo inválido');
+      }
+
+      const validItems: Item[] = parsed.items
+        .map((entry: unknown) => normalizeItem(entry))
+        .filter((i: Item | null): i is Item => i !== null);
+
+      if (validItems.length === 0 && parsed.items.length > 0) {
+        throw new Error('El archivo no contiene artículos válidos.');
+      }
+
+      const previousItems = stateRef.current.items;
+
+      const importedItems = await Promise.all(
+        validItems.map(async (item) => {
+          if (!item.imageData?.startsWith('data:image/')) return item;
+
+          const stored = await persistImageToDisk(item.imageData, item.id);
+          return stored === item.imageData ? item : { ...item, imageData: stored };
+        }),
+      );
+
+      const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
+      const validAccounts = rawAccounts
+        .map((entry: unknown) => normalizeAccount(entry))
+        .filter((a: Account | null): a is Account => a !== null);
+
+      const rawTransactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+      const validTransactions = pruneTransactions(
+        rawTransactions
+          .map((entry: unknown) => normalizeTransaction(entry))
+          .filter((t: Transaction | null): t is Transaction => t !== null),
+        validAccounts,
+      );
+
+      const rawGoals = Array.isArray(parsed.savingsGoals) ? parsed.savingsGoals : [];
+      const validGoals = rawGoals
+        .map((entry: unknown) => normalizeSavingsGoal(entry))
+        .filter((g: SavingsGoal | null): g is SavingsGoal => g !== null);
+
+      // Backups viejos no traen la clave: se importa vacío, sin fallar.
+      const rawRecurring = Array.isArray(parsed.recurringExpenses)
+        ? parsed.recurringExpenses
+        : [];
+      const validRecurring = rawRecurring
+        .map((entry: unknown) => normalizeRecurringExpense(entry))
+        .filter((e: RecurringExpense | null): e is RecurringExpense => e !== null);
+
+      const nextPrefs = normalizePrefs(parsed.prefs);
+
+      dispatch({
+        type: 'init',
+        payload: {
+          items: importedItems,
+          categories: parsed.categories || DEFAULT_CATEGORIES,
+          prefs: nextPrefs,
+          accounts: validAccounts,
+          transactions: validTransactions,
+          savingsGoals: validGoals,
+          recurringExpenses: validRecurring,
+          view: 'list',
+        },
+      });
+
+      // Guardamos también las preferencias importadas en SQLite
+      void savePrefs(nextPrefs);
+
+      // Limpiar imágenes locales que pertenecían a artículos anteriores y ya no se usan
+      if (isTauri()) {
+        const nextRefs = new Set(
+          importedItems.map((i) => i.imageData).filter((ref): ref is string => Boolean(ref)),
+        );
+        for (const oldItem of previousItems) {
+          if (
+            oldItem.imageData &&
+            isLocalImageRef(oldItem.imageData) &&
+            !nextRefs.has(oldItem.imageData)
+          ) {
+            void deleteDiskImage(oldItem.imageData).catch(console.warn);
+          }
+        }
+      }
+
+      showToast(
+        `Datos importados correctamente (${importedItems.length} artículos, ${validAccounts.length} cuentas, ${validGoals.length} metas)`,
+      );
+      dispatch({ type: 'set-view', view: 'list' });
+      return true;
+    } catch (err: unknown) {
+      const message = err instanceof Error
+        ? err.message
+        : 'Error al leer el archivo. Asegúrate de que sea un backup válido.';
+      showToast(message);
+      return false;
+    }
   }, [showToast]);
 
   const importData = useCallback<DataValue['importData']>((file) => {
@@ -1298,82 +1725,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
       void (async () => {
         try {
           const content = e.target?.result as string;
-          const parsed = JSON.parse(content);
-
-          if (!parsed.items || !Array.isArray(parsed.items)) {
-            throw new Error('Formato de archivo inválido');
-          }
-
-          // BLINDAJE: Normalizamos cada artículo y filtramos los que sean inválidos
-          const validItems: Item[] = parsed.items
-            .map((raw: unknown) => normalizeItem(raw))
-            .filter((i: Item | null): i is Item => i !== null);
-
-          if (validItems.length === 0 && parsed.items.length > 0) {
-            throw new Error('El archivo no contiene artículos válidos.');
-          }
-
-          // Las fotos del backup vienen embebidas en Base64: se escriben a
-          // disco y el estado guarda sólo la referencia.
-          const importedItems = await Promise.all(
-            validItems.map(async (item) => {
-              if (!item.imageData.startsWith('data:image/')) return item;
-
-              const stored = await persistImageToDisk(item.imageData, item.id);
-              return stored === item.imageData ? item : { ...item, imageData: stored };
-            }),
-          );
-
-          // Backups v1 no traen finanzas: arrays vacíos como fallback.
-          const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
-          const validAccounts = rawAccounts
-            .map((raw: unknown) => normalizeAccount(raw))
-            .filter((a: Account | null): a is Account => a !== null);
-
-          const rawTransactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
-          const validTransactions = pruneTransactions(
-            rawTransactions
-              .map((raw: unknown) => normalizeTransaction(raw))
-              .filter((t: Transaction | null): t is Transaction => t !== null),
-            validAccounts
-          );
-
-          // Backups v2 tampoco traen metas: array vacío, no se pierde nada.
-          const rawGoals = Array.isArray(parsed.savingsGoals) ? parsed.savingsGoals : [];
-          const validGoals = rawGoals
-            .map((raw: unknown) => normalizeSavingsGoal(raw))
-            .filter((g: SavingsGoal | null): g is SavingsGoal => g !== null);
-
-          dispatch({
-            type: 'init',
-            payload: {
-              items: importedItems,
-              categories: parsed.categories || DEFAULT_CATEGORIES,
-              // Un backup con `viewMode`/`status` inventado no debe romper la UI.
-              prefs: normalizePrefs(parsed.prefs),
-              accounts: validAccounts,
-              transactions: validTransactions,
-              savingsGoals: validGoals,
-              view: 'list',
-            },
-          });
-
-          showToast(
-            `Datos importados correctamente (${importedItems.length} artículos, ${validAccounts.length} cuentas, ${validGoals.length} metas)`
-          );
-          dispatch({ type: 'set-view', view: 'list' });
-        } catch (err: unknown) {
-          // FIX #3: `catch (err: any)` violaba useUnknownInCatchVariables.
-          // Tipamos como unknown y estrechamos con instanceof.
-          const message = err instanceof Error
-            ? err.message
-            : 'Error al leer el archivo. Asegúrate de que sea un backup válido.';
-          showToast(message);
+          await importPayload(JSON.parse(content));
+        } catch {
+          showToast('Error al leer el archivo. Asegúrate de que sea un backup válido.');
         }
       })();
     };
     reader.readAsText(file);
-  }, [showToast]);
+  }, [importPayload, showToast]);
+
+  const triggerManualLocalBackup = useCallback<DataValue['triggerManualLocalBackup']>(
+    async () => {
+      try {
+        const payload = await buildBackupPayload();
+        const result = await runAutoBackup(JSON.stringify(payload), { force: true });
+
+        if (result.created) {
+          showToast('Respaldo local guardado');
+          return true;
+        }
+      } catch (error) {
+        console.warn('Respaldo manual fallido.', error);
+      }
+
+      showToast('No se pudo guardar el respaldo local.');
+      return false;
+    },
+    [buildBackupPayload, showToast],
+  );
+
+  const restoreLocalBackup = useCallback<DataValue['restoreLocalBackup']>(
+    async (fileName) => {
+      const content = await readAutoBackupContent(fileName);
+
+      if (!content) {
+        showToast('No se pudo leer la copia seleccionada.');
+        return false;
+      }
+
+      try {
+        return await importPayload(JSON.parse(content));
+      } catch {
+        showToast('La copia seleccionada está dañada.');
+        return false;
+      }
+    },
+    [importPayload, showToast],
+  );
 
   // ==========================================
   // VALORES DE CADA CONTEXTO
@@ -1394,12 +1792,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     accounts: state.accounts,
     transactions: state.transactions,
     savingsGoals: state.savingsGoals,
+    recurringExpenses: state.recurringExpenses,
     addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
+    addTransactionsBatch,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
+    addRecurringExpense, updateRecurringExpense, deleteRecurringExpense, payRecurringExpense,
   }), [
-    state.accounts, state.transactions, state.savingsGoals,
+    state.accounts, state.transactions, state.savingsGoals, state.recurringExpenses,
     addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
+    addTransactionsBatch,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
+    addRecurringExpense, updateRecurringExpense, deleteRecurringExpense, payRecurringExpense,
   ]);
 
   const dataValue = useMemo<DataValue>(() => ({
@@ -1409,13 +1812,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     addItem, updateItem, removeItem, toggleBought, setWishlist,
     reorderItems,
     addCategory, updateCategory, deleteCategory,
-    exportData, importData,
+    exportData, importData, triggerManualLocalBackup, restoreLocalBackup,
   }), [
     state.items, state.categories, state.ready,
     addItem, updateItem, removeItem, toggleBought, setWishlist,
     reorderItems,
     addCategory, updateCategory, deleteCategory,
-    exportData, importData,
+    exportData, importData, triggerManualLocalBackup, restoreLocalBackup,
   ]);
 
   const uiValue = useMemo<UIValue>(() => ({

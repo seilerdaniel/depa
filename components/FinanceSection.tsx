@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { useData, useFinance } from '@/state/AppProvider';
 import {
   money, parsePrice, foldText, formatMonth, currentMonthKey,
-  formatInstallmentProgress, getInstallmentStatus,
+  formatInstallmentProgress, getInstallmentStatus, analyzeCreditCardStatement,
+  normalizeBillingDay, roundMoney,
   type InstallmentStatus,
 } from '@/lib/utils';
 import type {
   Account, AccountType, Item, SavingsGoal, Transaction, TransactionType,
 } from '@/lib/types';
 import { Icon } from './Icon';
+import { RecurringExpensesSection } from './RecurringExpensesSection';
+import { StatementImporterModal } from './StatementImporterModal';
 
 // ==========================================
 // METADATOS DE PRESENTACIÓN
@@ -100,6 +103,14 @@ const LABEL_CLASS = 'text-xs font-bold uppercase tracking-wider text-muted';
 
 const budgetFormatter = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 });
 const formatAmount = (value: number) => budgetFormatter.format(value);
+
+/** Texto relativo para los chips de cierre y vencimiento de una tarjeta. */
+function relativeDays(days: number | null): string {
+  if (days === null) return '';
+  if (days === 0) return 'hoy';
+  if (days > 0) return `en ${days} d`;
+  return `hace ${Math.abs(days)} d`;
+}
 
 const dateFormatter = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit',
@@ -193,8 +204,16 @@ export function FinanceSection() {
   const [accountType, setAccountType] = useState<AccountType>('efectivo');
   const [accountBalance, setAccountBalance] = useState('0');
   const [accountColor, setAccountColor] = useState('accent');
+  const [accountClosingDay, setAccountClosingDay] = useState('');
+  const [accountDueDay, setAccountDueDay] = useState('');
   const [accountError, setAccountError] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // --- Pago de resumen de tarjeta ---
+  const [payingCardId, setPayingCardId] = useState<string | null>(null);
+  const [paymentOriginId, setPaymentOriginId] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentError, setPaymentError] = useState('');
 
   // --- Movimientos ---
   const [txType, setTxType] = useState<TransactionType>('gasto');
@@ -239,6 +258,9 @@ export function FinanceSection() {
 
   // --- Cuota del mes ---
   const [installmentAccountId, setInstallmentAccountId] = useState('');
+
+  // --- Importador de extractos ---
+  const [isImporterOpen, setImporterOpen] = useState(false);
 
   const totalBalance = useMemo(
     () => accounts.reduce((sum, account) => sum + account.balance, 0),
@@ -377,6 +399,8 @@ export function FinanceSection() {
     setAccountType('efectivo');
     setAccountBalance('0');
     setAccountColor('accent');
+    setAccountClosingDay('');
+    setAccountDueDay('');
     setAccountError('');
   };
 
@@ -391,6 +415,8 @@ export function FinanceSection() {
     setAccountType(account.type);
     setAccountBalance(formatAmount(account.balance));
     setAccountColor(account.color);
+    setAccountClosingDay(account.closingDay ? String(account.closingDay) : '');
+    setAccountDueDay(account.dueDay ? String(account.dueDay) : '');
     setAccountError('');
     setAccountFormOpen(true);
   };
@@ -415,6 +441,21 @@ export function FinanceSection() {
       return;
     }
 
+    // Los días de facturación son opcionales, pero si se escriben tienen que
+    // ser válidos: un 32 dejaría la tarjeta sin fechas y en silencio.
+    const isCard = accountType === 'tarjeta';
+    const closingDay = isCard ? normalizeBillingDay(accountClosingDay) : null;
+    const dueDay = isCard ? normalizeBillingDay(accountDueDay) : null;
+
+    if (isCard && accountClosingDay.trim() !== '' && closingDay === null) {
+      setAccountError('El día de cierre tiene que estar entre 1 y 31.');
+      return;
+    }
+    if (isCard && accountDueDay.trim() !== '' && dueDay === null) {
+      setAccountError('El día de vencimiento tiene que estar entre 1 y 31.');
+      return;
+    }
+
     if (editingAccountId) {
       const existing = accounts.find((account) => account.id === editingAccountId);
       if (!existing) {
@@ -428,6 +469,8 @@ export function FinanceSection() {
         type: accountType,
         balance,
         color: accountColor,
+        closingDay,
+        dueDay,
       });
 
       if (!updated) {
@@ -435,7 +478,14 @@ export function FinanceSection() {
         return;
       }
     } else {
-      const created = addAccount({ name, type: accountType, balance, color: accountColor });
+      const created = addAccount({
+        name,
+        type: accountType,
+        balance,
+        color: accountColor,
+        closingDay,
+        dueDay,
+      });
       if (!created) {
         setAccountError('No se pudo crear la cuenta. El nombre no puede repetirse.');
         return;
@@ -454,6 +504,79 @@ export function FinanceSection() {
     deleteAccount(id);
     setConfirmDeleteId(null);
     if (editingAccountId === id) closeAccountForm();
+  };
+
+  // ==========================================
+  // PAGO DE RESUMEN DE TARJETA
+  // ==========================================
+  const liquidAccounts = useMemo(
+    () => accounts.filter((account) => account.type !== 'tarjeta'),
+    [accounts],
+  );
+
+  const closePaymentForm = () => {
+    setPayingCardId(null);
+    setPaymentOriginId('');
+    setPaymentAmount('');
+    setPaymentError('');
+  };
+
+  const openPaymentForm = (card: Account) => {
+    if (payingCardId === card.id) {
+      closePaymentForm();
+      return;
+    }
+
+    const statement = analyzeCreditCardStatement(card, transactions);
+
+    // Prioriza la cuenta con saldo suficiente: si ninguna llega, la primera
+    // igual sirve para un pago parcial.
+    const preferred =
+      liquidAccounts.find((account) => account.balance >= statement.statementToPay) ??
+      liquidAccounts[0];
+
+    setPayingCardId(card.id);
+    setPaymentOriginId(preferred?.id ?? '');
+    setPaymentAmount(formatAmount(statement.statementToPay));
+    setPaymentError('');
+  };
+
+  const handlePaymentSubmit = (event: FormEvent<HTMLFormElement>, card: Account) => {
+    event.preventDefault();
+
+    if (!paymentOriginId) {
+      setPaymentError('Elegí una cuenta de origen.');
+      return;
+    }
+
+    const amount = parseSignedAmount(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setPaymentError('El monto tiene que ser mayor a cero.');
+      return;
+    }
+
+    const statement = analyzeCreditCardStatement(card, transactions);
+    if (amount > statement.statementToPay) {
+      setPaymentError(`El resumen a pagar es ${money(statement.statementToPay)}.`);
+      return;
+    }
+
+    const ok = addTransaction({
+      accountId: paymentOriginId,
+      destinationAccountId: card.id,
+      type: 'transferencia',
+      amount: roundMoney(amount),
+      date: Date.now(),
+      category: 'Pago tarjeta',
+      notes: `Pago resumen ${card.name}`,
+    });
+
+    if (!ok) {
+      setPaymentError('No se pudo registrar el pago.');
+      return;
+    }
+
+    closePaymentForm();
   };
 
   // ==========================================
@@ -854,6 +977,54 @@ export function FinanceSection() {
               </fieldset>
             </div>
 
+            {accountType === 'tarjeta' && (
+              <div className="grid gap-4 rounded-2xl border border-line bg-surface p-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <label htmlFor="account-closing-day" className={LABEL_CLASS}>
+                    Día de cierre
+                  </label>
+                  <input
+                    id="account-closing-day"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={31}
+                    step={1}
+                    value={accountClosingDay}
+                    onChange={(event) => {
+                      setAccountClosingDay(event.target.value);
+                      setAccountError('');
+                    }}
+                    placeholder="Opcional"
+                    className={INPUT_CLASS}
+                  />
+                  <p className="text-[0.7rem] text-muted">Del 1 al 31.</p>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <label htmlFor="account-due-day" className={LABEL_CLASS}>
+                    Día de vencimiento
+                  </label>
+                  <input
+                    id="account-due-day"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={31}
+                    step={1}
+                    value={accountDueDay}
+                    onChange={(event) => {
+                      setAccountDueDay(event.target.value);
+                      setAccountError('');
+                    }}
+                    placeholder="Opcional"
+                    className={INPUT_CLASS}
+                  />
+                  <p className="text-[0.7rem] text-muted">Del 1 al 31.</p>
+                </div>
+              </div>
+            )}
+
             {accountError && (
               <p
                 role="alert"
@@ -892,6 +1063,11 @@ export function FinanceSection() {
             {accounts.map((account) => {
               const accent = accentColor(account.color);
               const confirming = confirmDeleteId === account.id;
+              const statement =
+                account.type === 'tarjeta'
+                  ? analyzeCreditCardStatement(account, transactions)
+                  : null;
+              const isPaying = payingCardId === account.id;
 
               return (
                 <li
@@ -954,6 +1130,131 @@ export function FinanceSection() {
                   >
                     {money(account.balance)}
                   </p>
+
+                  {statement && (
+                    <div className="relative mt-3 grid gap-2 pl-2">
+                      {(statement.nextClosingDate || statement.nextDueDate) && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {statement.nextClosingDate && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-[0.65rem] font-semibold text-ink-soft">
+                              Cierre día {account.closingDay}
+                              <span className="font-normal text-muted">
+                                · {relativeDays(statement.daysToClosing)}
+                              </span>
+                            </span>
+                          )}
+                          {statement.nextDueDate && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-[0.65rem] font-semibold text-ink-soft">
+                              Vence día {account.dueDay}
+                              <span className="font-normal text-muted">
+                                · {relativeDays(statement.daysToDue)}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-baseline justify-between gap-2 rounded-xl border border-line bg-surface px-2.5 py-1.5">
+                        <span className="text-[0.6rem] font-bold uppercase tracking-wider text-muted">
+                          Consumos del ciclo
+                        </span>
+                        <span className="text-xs font-bold tabular-nums text-ink">
+                          {money(statement.currentCycleSpend)}
+                        </span>
+                      </div>
+
+                      {statement.statementToPay > 0 && (
+                        <>
+                          <div className="flex items-baseline justify-between gap-2 rounded-xl border border-danger/30 bg-danger-soft px-2.5 py-1.5">
+                            <span className="text-[0.6rem] font-bold uppercase tracking-wider text-danger">
+                              Resumen a pagar
+                            </span>
+                            <span className="text-xs font-bold tabular-nums text-danger">
+                              {money(statement.statementToPay)}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => openPaymentForm(account)}
+                            aria-expanded={isPaying}
+                            className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3 py-1.5 text-[0.7rem] font-bold text-ink transition-colors hover:bg-surface-3"
+                          >
+                            <Icon name="wallet" size={13} />
+                            {isPaying ? 'Cancelar pago' : 'Pagar resumen'}
+                          </button>
+
+                          {isPaying && (
+                            <form
+                              onSubmit={(event) => handlePaymentSubmit(event, account)}
+                              className="grid gap-2 rounded-xl border border-line bg-surface p-2.5"
+                            >
+                              <div className="grid gap-1">
+                                <label
+                                  htmlFor={`pay-origin-${account.id}`}
+                                  className="text-[0.6rem] font-bold uppercase tracking-wider text-muted"
+                                >
+                                  Cuenta de origen
+                                </label>
+                                <SelectField
+                                  id={`pay-origin-${account.id}`}
+                                  value={paymentOriginId}
+                                  onChange={(value) => {
+                                    setPaymentOriginId(value);
+                                    setPaymentError('');
+                                  }}
+                                >
+                                  {liquidAccounts.length === 0 && (
+                                    <option value="">Sin cuentas disponibles</option>
+                                  )}
+                                  {liquidAccounts.map((origin) => (
+                                    <option key={origin.id} value={origin.id}>
+                                      {origin.name} · {money(origin.balance)}
+                                    </option>
+                                  ))}
+                                </SelectField>
+                              </div>
+
+                              <div className="grid gap-1">
+                                <label
+                                  htmlFor={`pay-amount-${account.id}`}
+                                  className="text-[0.6rem] font-bold uppercase tracking-wider text-muted"
+                                >
+                                  Monto a pagar
+                                </label>
+                                <input
+                                  id={`pay-amount-${account.id}`}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={paymentAmount}
+                                  onChange={(event) => {
+                                    setPaymentAmount(event.target.value);
+                                    setPaymentError('');
+                                  }}
+                                  className={INPUT_CLASS}
+                                />
+                              </div>
+
+                              {paymentError && (
+                                <p role="alert" className="text-[0.7rem] font-semibold text-danger">
+                                  {paymentError}
+                                </p>
+                              )}
+
+                              <button
+                                type="submit"
+                                disabled={liquidAccounts.length === 0}
+                                className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-[0.7rem] font-bold text-accent-on shadow-sm transition-all hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <Icon name="check" size={13} />
+                                Confirmar pago
+                              </button>
+                            </form>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {confirming && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-danger/40 bg-danger-soft px-3 py-2">
@@ -1351,6 +1652,11 @@ export function FinanceSection() {
       </div>
 
       {/* ==========================================
+          GASTOS FIJOS Y SERVICIOS DEL HOGAR
+      ========================================== */}
+      <RecurringExpensesSection />
+
+      {/* ==========================================
           CUOTAS ACTIVAS DEL MES
       ========================================== */}
       {activeInstallments.length > 0 && (
@@ -1457,9 +1763,19 @@ export function FinanceSection() {
 
             <button
               type="button"
+              onClick={() => setImporterOpen(true)}
+              disabled={!hasAccounts}
+              className="inline-flex min-h-[42px] cursor-pointer items-center gap-2 rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm font-bold text-ink transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Icon name="upload" size={16} />
+              Importar extracto
+            </button>
+
+            <button
+              type="button"
               onClick={focusMovementForm}
               disabled={!hasAccounts}
-              className="inline-flex min-h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-4 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex min-h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-bold text-accent-on shadow-sm transition-all hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100"
             >
               <Icon name="plus" size={16} />
               Nuevo movimiento
@@ -1707,7 +2023,7 @@ export function FinanceSection() {
             <button
               type="submit"
               disabled={!hasAccounts}
-              className="inline-flex min-h-[46px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-6 text-sm font-bold text-accent-on shadow-sm transition-all hover:bg-accent-ink active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+              className="inline-flex min-h-[46px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-bold text-accent-on shadow-sm transition-all hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100 sm:w-auto"
             >
               <Icon name="check" size={17} />
               Registrar movimiento
@@ -1999,6 +2315,11 @@ export function FinanceSection() {
           </>
         )}
       </div>
+
+      <StatementImporterModal
+        open={isImporterOpen}
+        onClose={() => setImporterOpen(false)}
+      />
     </section>
   );
 }

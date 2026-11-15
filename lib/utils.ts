@@ -19,8 +19,10 @@ import {
   CARD_SURFACES,
 } from './config';
 import type {
-  Account, AccountType, CardAccentColor, CardSurfaceStyle, Dimensions, HomeCardConfig,
-  HomeModuleId, Installments, Item, Prefs, SavingsGoal, Transaction, TransactionType,
+  Account, AccountType, CardAccentColor, CardSurfaceStyle, CashflowForecastResult,
+  CashflowMonth, CreditCardStatement, Dimensions, HomeCardConfig, HomeModuleId, Installments,
+  Item, ItemOption, Prefs, RecurringExpense, RecurringExpenseState, RecurringExpenseStatus,
+  RecurringFrequency, SavingsGoal, Transaction, TransactionType,
 } from './types';
 
 // ==========================================
@@ -38,14 +40,6 @@ export const roundMoney = (n: number) => Math.round(n * 100) / 100;
 // ==========================================
 // PRIORIDADES
 // ==========================================
-/**
- * Peso numérico 0..5 de una prioridad, para ordenar de mayor a menor.
- *
- * Acepta tanto los ids canónicos de la app ('urgente' | 'media' | 'baja')
- * como texto heredado de backups viejos ('URGENTE', 'ALTA', 'MEDIA', 'BAJA').
- * Un valor desconocido pesa 0: nunca gana un ordenamiento por prioridad,
- * pero tampoco rompe el render.
- */
 const PRIORITY_WEIGHTS: Record<string, number> = {
   urgente: 5,
   alta: 4,
@@ -72,7 +66,6 @@ export function formatMonth(monthStr: string | null | undefined): string {
   const [year, month] = monthStr.split('-');
   if (!year || !month) return '';
   const date = new Date(Number(year), Number(month) - 1);
-  // Usamos 'es' para obtener la abreviatura del mes
   return new Intl.DateTimeFormat('es', { month: 'short', year: 'numeric' }).format(date);
 }
 
@@ -162,7 +155,7 @@ export function normalizeDimensions(raw: unknown): Dimensions | null {
   const d = {
     height: normDim((raw as any).height),
     width: normDim((raw as any).width),
-    depth: normDim((raw as any).depth)
+    depth: normDim((raw as any).depth),
   };
   return d.height || d.width || d.depth ? d : null;
 }
@@ -174,8 +167,6 @@ export function normalizeInstallments(raw: unknown): Installments | null {
   if (!Number.isFinite(count) || count < 1 || count > 72) return null;
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
-  // `normalizeItem` delega acá, así que este es el único lugar donde hay que
-  // preservar `startMonth`. Sin él, el artículo queda como legado: activo.
   return {
     count: Math.round(count),
     amount: Math.round(amount * 100) / 100,
@@ -186,18 +177,113 @@ export function normalizeInstallments(raw: unknown): Installments | null {
 /** Referencia a una foto guardada en disco: `local-img://<archivo>`. */
 const LOCAL_IMAGE_REF = /^local-img:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
 
-/**
- * Deja pasar sólo fotos conocidas: un DataURL válido o una referencia
- * nuestra a disco. Cualquier otra cosa se descarta (evita rutas arbitrarias).
- */
 export const normalizeImageData = (value: unknown): string => {
   if (typeof value !== 'string') return '';
   if (/^data:image\//i.test(value)) return value;
   return LOCAL_IMAGE_REF.test(value) ? value : '';
 };
 
+// ==========================================
+// OPCIONES DE COMPRA (Comparador)
+// ==========================================
+export function normalizeItemOption(raw: unknown): ItemOption | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const price = Number(r.price);
+  if (!Number.isFinite(price) || price < 0) return null;
+
+  const label = normalizeLabel(r.label, 80);
+  const brand = normalizeLabel(r.brand, 40);
+  const model = normalizeLabel(r.model, 40);
+  const storeName = normalizeLabel(r.storeName, 80);
+
+  if (!label && !brand && !model && !storeName) return null;
+
+  const rawRating = Number(r.rating);
+  const rating = Number.isFinite(rawRating)
+    ? Math.min(5, Math.max(0, Math.round(rawRating)))
+    : 0;
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    label,
+    brand,
+    model,
+    storeName,
+    storeLocation: normalizeLabel(r.storeLocation, 120),
+    price: roundMoney(price),
+    installments: normalizeInstallments(r.installments),
+    purchaseUrl: normalizeUrl(r.purchaseUrl) || '',
+    rating,
+    badge: normalizeLabel(r.badge, 32),
+    pros: normalizeLabel(r.pros, 200),
+    cons: normalizeLabel(r.cons, 200),
+    createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
+  };
+}
+
+export function normalizeItemOptions(raw: unknown): ItemOption[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: ItemOption[] = [];
+
+  for (const entry of raw) {
+    const opt = normalizeItemOption(entry);
+    if (!opt) continue;
+    if (seen.has(opt.id)) opt.id = createId();
+    seen.add(opt.id);
+    out.push(opt);
+  }
+  return out;
+}
+
+export interface OptionWinners {
+  bestCashId: string | null;
+  lowestInstallmentId: string | null;
+  bestValueId: string | null;
+}
+
 /**
- * Toma un objeto crudo (de localStorage) y lo convierte en un Item seguro y validado.
+ * Detecta las opciones ganadoras según precio al contado, cuota mensual
+ * y relación precio/calidad (requiere al menos 2 opciones comparables).
+ */
+export function analyzeItemOptions(options: ItemOption[]): OptionWinners {
+  if (options.length < 2) {
+    return { bestCashId: null, lowestInstallmentId: null, bestValueId: null };
+  }
+
+  let bestCash: ItemOption | null = null;
+  let lowestInst: ItemOption | null = null;
+  let bestValue: { option: ItemOption; score: number } | null = null;
+
+  for (const opt of options) {
+    if (opt.price > 0 && (!bestCash || opt.price < bestCash.price)) {
+      bestCash = opt;
+    }
+
+    const monthly = opt.installments?.amount ?? 0;
+    if (monthly > 0 && (!lowestInst || monthly < (lowestInst.installments?.amount ?? Infinity))) {
+      lowestInst = opt;
+    }
+
+    if (opt.rating > 0 && opt.price > 0) {
+      const score = Math.pow(opt.rating, 1.4) / opt.price;
+      if (!bestValue || score > bestValue.score) {
+        bestValue = { option: opt, score };
+      }
+    }
+  }
+
+  return {
+    bestCashId: bestCash?.id ?? null,
+    lowestInstallmentId: lowestInst?.id ?? null,
+    bestValueId: bestValue?.option.id ?? null,
+  };
+}
+
+/**
+ * Toma un objeto crudo (de SQLite / backup) y lo convierte en un Item seguro y validado.
  */
 export function normalizeItem(raw: unknown): Item | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -228,7 +314,8 @@ export function normalizeItem(raw: unknown): Item | null {
     dimensions: normalizeDimensions(r.dimensions),
     installments: normalizeInstallments(r.installments),
     purchaseMonth: typeof r.purchaseMonth === 'string' && /^\d{4}-\d{2}$/.test(r.purchaseMonth) ? r.purchaseMonth : null,
-    notes, brand: normalizeLabel(r.brand, 40),
+    notes,
+    brand: normalizeLabel(r.brand, 40),
     model: normalizeLabel(r.model, 40),
     color: normalizeLabel(r.color, 30),
     warranty: r.warranty === null || r.warranty === undefined || r.warranty === ''
@@ -237,16 +324,26 @@ export function normalizeItem(raw: unknown): Item | null {
         ? Math.round(Number(r.warranty))
         : null,
     orderNumber: normalizeLabel(r.orderNumber, 50),
+    options: normalizeItemOptions(r.options),
+    selectedOptionId: typeof r.selectedOptionId === 'string' && r.selectedOptionId
+      ? r.selectedOptionId
+      : null,
   };
-};
+}
 
 // ==========================================
 // NORMALIZACIÓN DE ENTIDADES FINANCIERAS
 // ==========================================
 /**
- * Convierte una cuenta cruda (localStorage / backup) en una Account segura.
- * Descarta lo que no tenga nombre; el resto se corrige a valores por defecto.
+ * Día de facturación de una tarjeta (cierre o vencimiento).
+ * Acepta enteros 1..31; vacío, decimal o fuera de rango → null.
  */
+export function normalizeBillingDay(value: unknown): number | null {
+  const day = Number(value);
+  if (!Number.isInteger(day) || day < 1 || day > 31) return null;
+  return day;
+}
+
 export function normalizeAccount(raw: unknown): Account | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -255,22 +352,26 @@ export function normalizeAccount(raw: unknown): Account | null {
   if (!name) return null;
 
   const balance = Number(r.balance);
+  const type: AccountType = ACCOUNT_TYPES.has(r.type as AccountType)
+    ? (r.type as AccountType)
+    : 'efectivo';
+
+  // Los días de facturación sólo tienen sentido en una tarjeta: en el resto
+  // se fuerzan a null para que un backup raro no deje datos fantasma.
+  const isCard = type === 'tarjeta';
 
   return {
     id: typeof r.id === 'string' && r.id ? r.id : createId(),
     name,
-    type: ACCOUNT_TYPES.has(r.type as AccountType) ? (r.type as AccountType) : 'efectivo',
+    type,
     balance: Number.isFinite(balance) ? roundMoney(balance) : 0,
     color: normalizeLabel(r.color, 20) || 'accent',
+    closingDay: isCard ? normalizeBillingDay(r.closingDay) : null,
+    dueDay: isCard ? normalizeBillingDay(r.dueDay) : null,
     createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
   };
 }
 
-/**
- * Convierte un movimiento crudo en una Transaction segura.
- * Reglas: siempre hay cuenta origen, el monto es positivo y sólo las
- * transferencias conservan `destinationAccountId`.
- */
 export function normalizeTransaction(raw: unknown): Transaction | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -303,13 +404,13 @@ export function normalizeTransaction(raw: unknown): Transaction | null {
     category: normalizeLabel(r.category, 40),
     notes: normalizeLabel(r.notes, 250),
     linkedItemId,
+    recurringExpenseId:
+      typeof r.recurringExpenseId === 'string' && r.recurringExpenseId
+        ? r.recurringExpenseId
+        : null,
   };
 }
 
-/**
- * Deja sólo los movimientos cuyas cuentas existen realmente.
- * Evita huérfanos tras borrar una cuenta o importar un backup inconsistente.
- */
 export function pruneTransactions(transactions: Transaction[], accounts: Account[]): Transaction[] {
   const ids = new Set(accounts.map((a) => a.id));
   return transactions.filter((t) => {
@@ -322,10 +423,6 @@ export function pruneTransactions(transactions: Transaction[], accounts: Account
 // ==========================================
 // METAS DE AHORRO
 // ==========================================
-/**
- * Convierte una meta cruda (SQLite / backup) en una SavingsGoal segura.
- * Descarta lo que no tenga nombre; los montos se sanean a >= 0.
- */
 export function normalizeSavingsGoal(raw: unknown): SavingsGoal | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -350,14 +447,105 @@ export function normalizeSavingsGoal(raw: unknown): SavingsGoal | null {
 }
 
 // ==========================================
+// GASTOS FIJOS Y SERVICIOS DEL HOGAR
+// ==========================================
+const RECURRING_FREQUENCIES: ReadonlySet<RecurringFrequency> = new Set([
+  'mensual', 'bimestral', 'anual',
+]);
+
+/** Meses entre pagos de cada frecuencia. */
+const FREQUENCY_STEP: Record<RecurringFrequency, number> = {
+  mensual: 1,
+  bimestral: 2,
+  anual: 12,
+};
+
+export const RECURRING_CATEGORIES: readonly string[] = [
+  'Alquiler', 'Expensas', 'Servicios', 'Seguros', 'Suscripciones', 'Impuestos',
+];
+
+export function normalizeRecurringExpense(raw: unknown): RecurringExpense | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const name = normalizeLabel(r.name, 60);
+  if (!name) return null;
+
+  const amount = roundMoney(Number(r.amount));
+  if (!Number.isFinite(amount) || amount < 0) return null;
+
+  const frequency = RECURRING_FREQUENCIES.has(r.frequency as RecurringFrequency)
+    ? (r.frequency as RecurringFrequency)
+    : 'mensual';
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    name,
+    category: normalizeLabel(r.category, 40) || 'Servicios',
+    amount,
+    // 10 es un default razonable: la mayoría de los servicios vencen a mitad de mes.
+    dueDay: normalizeBillingDay(r.dueDay) ?? 10,
+    frequency,
+    accountId: typeof r.accountId === 'string' && r.accountId ? r.accountId : null,
+    active: typeof r.active === 'boolean' ? r.active : true,
+    lastPaidMonth: normalizeMonth(r.lastPaidMonth),
+    notes: normalizeLabel(r.notes, 200),
+    createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
+  };
+}
+
+/**
+ * Un bimestral/anual sólo "cae" en los meses que corresponden a su ciclo,
+ * contado desde el mes en que se dio de alta. Un mensual cae siempre.
+ *
+ * Es la lectura más defendible de "aplica según el ciclo desde createdAt":
+ * si el servicio se creó en marzo y es bimestral, toca marzo, mayo, julio…
+ */
+export function recurringAppliesToMonth(expense: RecurringExpense, month: string): boolean {
+  if (expense.frequency === 'mensual') return true;
+
+  const target = monthIndex(month);
+  const start = monthIndex(currentMonthKey(new Date(expense.createdAt)));
+  if (target === null || start === null) return true;
+
+  const elapsed = target - start;
+  if (elapsed < 0) return false;
+
+  return elapsed % FREQUENCY_STEP[expense.frequency] === 0;
+}
+
+export function analyzeRecurringExpenseStatus(
+  expense: RecurringExpense,
+  now: Date = new Date(),
+): RecurringExpenseStatus {
+  const currentKey = currentMonthKey(now);
+  const appliesThisMonth = recurringAppliesToMonth(expense, currentKey);
+  const isPaidThisMonth = expense.lastPaidMonth === currentKey;
+
+  // `dateInMonth` recorta el día a fin de mes: un vencimiento el 31 cae el 28
+  // en febrero y el 30 en abril, en vez de desbordar al mes siguiente.
+  const dueDateThisMonth = dateInMonth(now.getFullYear(), now.getMonth(), expense.dueDay);
+  const daysUntilDue = daysBetween(dueDateThisMonth, now);
+
+  let state: RecurringExpenseState;
+  if (!expense.active) state = 'paused';
+  else if (isPaidThisMonth) state = 'paid';
+  else if (daysUntilDue < 0) state = 'overdue';
+  else if (daysUntilDue <= 5) state = 'due-soon';
+  else state = 'upcoming';
+
+  return {
+    appliesThisMonth,
+    isPaidThisMonth,
+    dueDateThisMonth,
+    daysUntilDue,
+    state,
+  };
+}
+
+// ==========================================
 // PREFS
 // ==========================================
-/**
- * Devuelve el valor si pertenece al set permitido; si no, el fallback.
- *
- * `localStorage` y los backups son datos NO confiables: un `viewMode` o un
- * `status` inventado dejaría la UI sin vista o con un filtro que no filtra.
- */
 function pickEnum<T extends string>(
   value: unknown,
   allowed: ReadonlySet<T>,
@@ -366,12 +554,6 @@ function pickEnum<T extends string>(
   return typeof value === 'string' && allowed.has(value as T) ? (value as T) : fallback;
 }
 
-/**
- * Valida la apariencia de los seis módulos del Inicio.
- *
- * Cada módulo se resuelve por separado y cae a SU default: un backup viejo
- * (sin `homeCards`) o con un ícono inexistente no rompe la grilla.
- */
 export function normalizeHomeCards(raw: unknown): Record<HomeModuleId, HomeCardConfig> {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const cards = {} as Record<HomeModuleId, HomeCardConfig>;
@@ -391,10 +573,6 @@ export function normalizeHomeCards(raw: unknown): Record<HomeModuleId, HomeCardC
   return cards;
 }
 
-/**
- * Sanea prefs de cualquier origen (localStorage o backup importado).
- * `DEFAULT_PREFS` actúa de base, así un JSON viejo no deja campos en `undefined`.
- */
 export function normalizePrefs(raw: unknown): Prefs {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_PREFS, homeCards: normalizeHomeCards(null) };
 
@@ -439,18 +617,13 @@ export function formatInstallments(inst?: Installments | null): string {
 // SEGUIMIENTO DE CUOTAS
 // ==========================================
 export interface InstallmentStatus {
-  /** Queda al menos una cuota por pagar en el mes actual. */
   active: boolean;
-  /** Cuota vigente (1-based). 0 si terminó o si no hay `startMonth` conocido. */
   current: number;
   total: number;
-  /** Monto que sigue pesando este mes. 0 cuando ya se pagaron todas. */
   monthlyAmount: number;
-  /** `true` cuando `elapsed >= count`. */
   finished: boolean;
 }
 
-/** Índice absoluto de mes (año * 12 + mes 0-11) para restar sin cruzar años. */
 const monthIndex = (value: string): number | null => {
   const month = normalizeMonth(value);
   if (!month) return null;
@@ -458,14 +631,6 @@ const monthIndex = (value: string): number | null => {
   return year * 12 + (m - 1);
 };
 
-/**
- * Estado de una financiación en un mes dado.
- *
- * Reglas:
- * - Sin `startMonth` (artículos viejos) se considera activa y se cobra completa.
- * - Si el mes actual es anterior al inicio, la cuota vigente es la 1.
- * - Si ya transcurrieron `count` meses, la financiación terminó: no suma al fijo.
- */
 export function getInstallmentStatus(
   installments: Installments | null | undefined,
   currentMonthYYYYMM: string,
@@ -476,7 +641,6 @@ export function getInstallmentStatus(
   const start = installments.startMonth ? monthIndex(installments.startMonth) : null;
   const now = monthIndex(currentMonthYYYYMM);
 
-  // Retrocompatibilidad: no se puede saber cuántas cuotas van.
   if (start === null || now === null) {
     return {
       active: true,
@@ -502,7 +666,6 @@ export function getInstallmentStatus(
   };
 }
 
-/** Texto de progreso: "Cuota 3 de 6" o "Cuotas finalizadas". */
 export function formatInstallmentProgress(status: InstallmentStatus | null): string {
   if (!status) return '';
   if (status.finished) return 'Cuotas finalizadas';
@@ -518,20 +681,11 @@ export interface PurchasesSummary {
   pendingCount: number;
   boughtTotal: number;
   boughtCount: number;
-  /** Pendiente + comprado. */
   grand: number;
-  /** Compromiso mensual de cuotas ACTIVAS de artículos YA comprados. */
   monthlyAmount: number;
-  /** Cuántas financiaciones siguen vigentes este mes. */
   activeInstallments: number;
 }
 
-/**
- * Único lugar donde se define qué cuenta cada métrica de compras.
- *
- * `PurchasesPanel` y `Dashboard` lo consumen: si mañana cambia la regla,
- * cambia acá y las dos pantallas siguen coincidiendo al centavo.
- */
 export function summarizePurchases(
   items: Item[],
   currentMonthYYYYMM: string,
@@ -550,8 +704,6 @@ export function summarizePurchases(
       boughtTotal += item.price;
       boughtCount += 1;
 
-      // Sólo una compra efectiva genera compromiso, y sólo mientras la
-      // financiación no haya terminado.
       const status = getInstallmentStatus(item.installments, currentMonthYYYYMM);
       if (status?.active && status.monthlyAmount > 0) {
         monthlyAmount += status.monthlyAmount;
@@ -575,20 +727,263 @@ export function summarizePurchases(
 }
 
 // ==========================================
-// PROCESAMIENTO DE IMÁGENES (OPTIMIZACIÓN)
+// TARJETAS DE CRÉDITO
 // ==========================================
-/**
- * Piso de resolución: por debajo de esto la foto deja de ser útil
- * y conviene rechazarla en lugar de guardar una mancha de píxeles.
- */
-const PHOTO_MIN_SIDE = 480;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Último día real del mes (28/29/30/31). `monthIndex0` va de 0 a 11. */
+function lastDayOfMonth(year: number, monthIndex0: number): number {
+  // Día 0 del mes siguiente = último día del mes actual.
+  return new Date(year, monthIndex0 + 1, 0).getDate();
+}
+
+/** Fecha del día pedido dentro del mes, recortada a fin de mes. */
+function dateInMonth(year: number, monthIndex0: number, day: number): Date {
+  return new Date(year, monthIndex0, Math.min(day, lastDayOfMonth(year, monthIndex0)));
+}
+
+const startOfDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const endOfDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+
+/** Diferencia en días calendario, inmune a los cambios de horario (DST). */
+export function daysBetween(target: Date, from: Date): number {
+  return Math.round((startOfDay(target).getTime() - startOfDay(from).getTime()) / MS_PER_DAY);
+}
+
+/** Próxima vez que cae `day`: este mes si todavía no pasó, si no el que viene. */
+function nextOccurrence(day: number, now: Date): Date {
+  const today = startOfDay(now);
+  const thisMonth = dateInMonth(now.getFullYear(), now.getMonth(), day);
+  if (thisMonth.getTime() >= today.getTime()) return thisMonth;
+
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return dateInMonth(next.getFullYear(), next.getMonth(), day);
+}
+
+/** Última vez que cayó `day`, estrictamente antes de hoy. */
+function previousOccurrence(day: number, now: Date): Date {
+  const today = startOfDay(now);
+  const thisMonth = dateInMonth(now.getFullYear(), now.getMonth(), day);
+  if (thisMonth.getTime() < today.getTime()) return thisMonth;
+
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return dateInMonth(prev.getFullYear(), prev.getMonth(), day);
+}
 
 /**
- * Toma un archivo de imagen, lo redimensiona y comprime para que quepa en localStorage.
+ * Estado del resumen de una tarjeta: cuánto hay que pagar, cuándo cierra,
+ * cuándo vence y cuánto se gastó en el ciclo en curso.
  *
- * Decodifica directo del File con `createImageBitmap` (sin pasar por un DataURL
- * intermedio, que duplicaba memoria) y reutiliza un único canvas entre intentos.
+ * Los días de cierre/vencimiento son opcionales: si faltan, las fechas
+ * quedan en `null` y sólo se calcula el monto.
  */
+export function analyzeCreditCardStatement(
+  account: Account,
+  transactions: Transaction[],
+  now: Date = new Date(),
+): CreditCardStatement {
+  const statementToPay =
+    account.balance < 0 ? roundMoney(Math.abs(account.balance)) : 0;
+
+  const closingDay = normalizeBillingDay(account.closingDay);
+  const dueDay = normalizeBillingDay(account.dueDay);
+
+  const nextClosingDate = closingDay === null ? null : nextOccurrence(closingDay, now);
+  const nextDueDate = dueDay === null ? null : nextOccurrence(dueDay, now);
+
+  // El último cierre marca el arranque del ciclo actual. Sin día configurado
+  // se usa el inicio del mes calendario, que es la aproximación más honesta.
+  const cycleStart =
+    closingDay === null
+      ? new Date(now.getFullYear(), now.getMonth(), 1)
+      : endOfDay(previousOccurrence(closingDay, now));
+
+  const currentCycleSpend = transactions
+    .filter(
+      (t) => t.accountId === account.id && t.type === 'gasto' && t.date > cycleStart.getTime(),
+    )
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  return {
+    statementToPay,
+    nextClosingDate,
+    nextDueDate,
+    daysToClosing: nextClosingDate === null ? null : daysBetween(nextClosingDate, now),
+    daysToDue: nextDueDate === null ? null : daysBetween(nextDueDate, now),
+    currentCycleSpend: roundMoney(currentCycleSpend),
+  };
+}
+
+// ==========================================
+// PROYECCIÓN DE FLUJO DE CAJA (6 MESES)
+// ==========================================
+const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('es-AR', { month: 'short' });
+
+/**
+ * Ingreso mensual de referencia: promedio de los últimos 3 meses calendario
+ * que hayan tenido ingresos. Los meses vacíos no castigan el promedio.
+ */
+export function estimateBaselineMonthlyIncome(
+  transactions: Transaction[],
+  now: Date = new Date(),
+): number {
+  const totals = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.type !== 'ingreso') continue;
+    const key = currentMonthKey(new Date(t.date));
+    totals.set(key, (totals.get(key) ?? 0) + t.amount);
+  }
+
+  const withIncome: number[] = [];
+  for (let offset = 0; offset < 3; offset += 1) {
+    const pivot = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    const total = totals.get(currentMonthKey(pivot)) ?? 0;
+    if (total > 0) withIncome.push(total);
+  }
+
+  if (withIncome.length === 0) return 0;
+  return roundMoney(withIncome.reduce((sum, v) => sum + v, 0) / withIncome.length);
+}
+
+/**
+ * Proyección a 6 meses del flujo de caja.
+ *
+ * Cruza tres fuentes: ingresos estimados, cuotas ya vigentes y compras
+ * planificadas (pendientes con `purchaseMonth`). No muta nada: es puramente
+ * derivada, así que se puede llamar en cada render sin riesgo.
+ */
+export function buildCashflowForecast(
+  items: Item[],
+  transactions: Transaction[],
+  accounts: Account[],
+  monthlyIncomeOverride?: number | null,
+  recurringExpenses: RecurringExpense[] = [],
+  now: Date = new Date(),
+): CashflowForecastResult {
+  const startingLiquidity = roundMoney(
+    accounts.filter((a) => a.type !== 'tarjeta').reduce((sum, a) => sum + a.balance, 0),
+  );
+
+  const defaultMonthlyIncome = estimateBaselineMonthlyIncome(transactions, now);
+
+  // Un override negativo o inválido se descarta: el promedio automático manda.
+  const override =
+    typeof monthlyIncomeOverride === 'number' &&
+    Number.isFinite(monthlyIncomeOverride) &&
+    monthlyIncomeOverride >= 0
+      ? roundMoney(monthlyIncomeOverride)
+      : null;
+
+  const baseIncome = override ?? defaultMonthlyIncome;
+
+  const currentKey = currentMonthKey(now);
+  const incomeThisMonth = roundMoney(
+    transactions
+      .filter((t) => t.type === 'ingreso' && currentMonthKey(new Date(t.date)) === currentKey)
+      .reduce((sum, t) => sum + t.amount, 0),
+  );
+
+  const months: CashflowMonth[] = [];
+  let runningLiquidity = startingLiquidity;
+
+  for (let i = 0; i < 6; i += 1) {
+    const pivot = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const key = currentMonthKey(pivot);
+
+    // En el mes en curso, lo ya cobrado puede superar el promedio histórico:
+    // proyectar menos de lo que hay en la cuenta sería engañoso.
+    const estimatedIncome =
+      i === 0 && override === null
+        ? roundMoney(Math.max(baseIncome, incomeThisMonth))
+        : baseIncome;
+
+    let installmentsTotal = 0;
+    let plannedTotal = 0;
+    let recurringTotal = 0;
+
+    for (const item of items) {
+      if (item.wishlist) continue;
+
+      if (item.bought) {
+        // Compras ya hechas: las cuotas mandan según el mes de la proyección.
+        const status = getInstallmentStatus(item.installments, key);
+        if (status?.active && status.monthlyAmount > 0) installmentsTotal += status.monthlyAmount;
+        continue;
+      }
+
+      // Compras planificadas: sólo pesan desde el mes elegido.
+      const startMonth = normalizeMonth(item.purchaseMonth);
+      if (!startMonth) continue;
+
+      const startIndex = monthIndex(startMonth);
+      const targetIndex = monthIndex(key);
+      if (startIndex === null || targetIndex === null) continue;
+
+      const offset = targetIndex - startIndex;
+      if (offset < 0) continue;
+
+      const plan = item.installments;
+      const hasPlan = !!plan && plan.count > 1 && plan.amount > 0;
+
+      if (offset === 0) {
+        // Desembolso de este mes: cuota 1 si hay plan, si no el precio.
+        plannedTotal += hasPlan ? plan.amount : item.price;
+      } else if (hasPlan && offset < plan.count) {
+        // Cuotas 2..N: ya no son "compra planificada", son cuota viva.
+        installmentsTotal += plan.amount;
+      }
+    }
+
+    const activeInstallments = roundMoney(installmentsTotal);
+    const plannedPurchases = roundMoney(plannedTotal);
+
+    // Gastos fijos: sólo los activos y sólo los meses que les toca.
+    // En el mes en curso se saltea lo ya pagado: ese gasto ya está descontado
+    // del saldo líquido y contarlo otra vez inflaría el egreso.
+    for (const expense of recurringExpenses) {
+      if (!expense.active) continue;
+      if (!recurringAppliesToMonth(expense, key)) continue;
+      if (i === 0 && expense.lastPaidMonth === currentKey) continue;
+      recurringTotal += expense.amount;
+    }
+
+    const recurring = roundMoney(recurringTotal);
+    const totalOutflow = roundMoney(activeInstallments + plannedPurchases + recurring);
+    const netCashflow = roundMoney(estimatedIncome - totalOutflow);
+    runningLiquidity = roundMoney(runningLiquidity + netCashflow);
+
+    months.push({
+      key,
+      label: `${MONTH_LABEL_FORMATTER.format(pivot).replace('.', '')} ${pivot.getFullYear()}`,
+      estimatedIncome,
+      activeInstallments,
+      plannedPurchases,
+      recurringTotal: recurring,
+      totalOutflow,
+      netCashflow,
+      projectedLiquidity: runningLiquidity,
+    });
+  }
+
+  const firstNegativeMonth = months.find((m) => m.projectedLiquidity < 0) ?? null;
+
+  return {
+    startingLiquidity,
+    defaultMonthlyIncome,
+    months,
+    hasNegativeMonth: firstNegativeMonth !== null,
+    firstNegativeMonth,
+  };
+}
+
+// ==========================================
+// PROCESAMIENTO DE IMÁGENES (OPTIMIZACIÓN)
+// ==========================================
+const PHOTO_MIN_SIDE = 480;
+
 export async function optimizePhoto(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) {
     throw new Error('Elige un archivo de imagen (JPG, PNG o WebP).');
@@ -607,7 +1002,6 @@ export async function optimizePhoto(file: File): Promise<string> {
   const naturalWidth = bitmap.width;
   const naturalHeight = bitmap.height;
 
-  // Un canvas para todos los intentos: crear uno por vuelta era basura pura.
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
 
@@ -619,17 +1013,14 @@ export async function optimizePhoto(file: File): Promise<string> {
   try {
     let maxSide = MAX_PHOTO_SIDE;
 
-    // Bajamos resolución y calidad de forma acotada: 900 → 675 → 506 → 480.
     while (maxSide >= PHOTO_MIN_SIDE) {
       const scale = Math.min(1, maxSide / Math.max(naturalWidth, naturalHeight));
       const targetWidth = Math.max(1, Math.round(naturalWidth * scale));
       const targetHeight = Math.max(1, Math.round(naturalHeight * scale));
 
-      // Asignar width/height reinicia el contexto; lo hacemos sólo si cambió.
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
       if (canvas.height !== targetHeight) canvas.height = targetHeight;
 
-      // Fondo blanco por si el original trae transparencia.
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, targetWidth, targetHeight);
 
@@ -645,14 +1036,10 @@ export async function optimizePhoto(file: File): Promise<string> {
       maxSide = Math.round(maxSide * 0.75);
     }
   } finally {
-    // Libera la memoria decodificada aunque haya error o corte temprano.
     bitmap.close();
   }
 
   throw new Error('La foto es demasiado pesada incluso optimizada. Prueba con otra.');
 }
 
-/**
- * Calcula un tamaño aproximado en KB de un DataURL base64.
- */
 export const estimateKb = (dataUrl: string) => Math.max(1, Math.round((dataUrl.length * 0.75) / 1024));

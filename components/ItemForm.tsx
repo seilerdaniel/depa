@@ -1,499 +1,852 @@
 'use client';
 
-import { useMemo, useRef, useState, useEffect } from 'react';
-import { useData, useUI } from '@/state/AppProvider';
-import { normalizeLabel, normalizeMonth, parsePrice, parseDimension, normalizeUrl, optimizePhoto, estimateKb, sameText, formatMonth, createId } from '@/lib/utils';
-import { PRIORITY, CATEGORY_MAX_LENGTH, SUBCATEGORY_MAX_LENGTH } from '@/lib/config';
-import { persistImageToDisk, deleteDiskImage, isLocalImageRef, useResolvedImageSrc } from '@/lib/nativeImages';
-import type { Installments } from '@/lib/types';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { useData, usePrefs, useToast, useUI } from '@/state/AppProvider';
+import {
+  DEFAULT_ITEM_FIELDS,
+  MAX_UPLOAD_BYTES,
+  PRIORITIES,
+  SUBCATEGORY_MAX_LENGTH,
+} from '@/lib/config';
+import { persistImageToDisk, useResolvedImageSrc } from '@/lib/nativeImages';
+import { money, normalizeLabel, parsePrice } from '@/lib/utils';
+import type { Dimensions, Installments, Item, Priority } from '@/lib/types';
 import { Icon } from './Icon';
 
-interface FormState {
-  name: string; category: string; subcategory: string; price: string;
-  priority: 'urgente' | 'alta' | 'media' | 'baja'; wishlist: boolean;
-  purchaseMonth: string; installments: string; installmentAmount: string; installmentStart: string;
-  imageUrl: string; photoData: string; purchaseUrl: string;
-  storeName: string; storeLocation: string; height: string; width: string; depth: string; notes: string;
-  brand: string; model: string; color: string; warranty: string; orderNumber: string;
+const NAME_MAX_LENGTH = 100;
+const NOTES_MAX_LENGTH = 1000;
+
+async function compressImage(file: File): Promise<string> {
+  const image = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(image.width * scale);
+  canvas.height = Math.round(image.height * scale);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('No se pudo procesar la imagen.');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.close();
+  return canvas.toDataURL('image/jpeg', 0.82);
 }
 
-type Errors = Partial<Record<'name' | 'category' | 'price' | 'imageUrl' | 'purchaseUrl' | 'dimensions' | 'installments' | 'warranty', string>>;
+type FormTab = 'basic' | 'details' | 'extra';
 
-const EMPTY: FormState = {
-  name: '', category: '', subcategory: '', price: '', priority: 'media', wishlist: false,
-  purchaseMonth: '', installments: '', installmentAmount: '', installmentStart: '', imageUrl: '', photoData: '',
-  purchaseUrl: '', storeName: '', storeLocation: '', height: '', width: '', depth: '', notes: '',
-  brand: '', model: '', color: '', warranty: '', orderNumber: ''
-};
+interface FormState {
+  name: string;
+  category: string;
+  subcategory: string;
+  price: string;
+  priority: Priority;
+  wishlist: boolean;
+  purchaseMonth: string;
+  hasInstallments: boolean;
+  installmentsCount: string;
+  installmentsAmount: string;
+  purchaseUrl: string;
+  storeName: string;
+  storeLocation: string;
+  brand: string;
+  model: string;
+  color: string;
+  width: string;
+  height: string;
+  depth: string;
+  warranty: string;
+  orderNumber: string;
+  notes: string;
+  imageUrl: string;
+  imageData: string | null;
+}
 
-export function ItemForm() {
-  const { items, categories, addItem, updateItem, addCategory } = useData();
-  const { editingItem, setEditingItem, itemFormOpen, setItemFormOpen } = useUI();
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [errors, setErrors] = useState<Errors>({});
-  const [activeTab, setActiveTab] = useState<'basico' | 'financiero' | 'detalles'>('basico');
-  const [showCatCreator, setShowCatCreator] = useState(false);
-  const [newCat, setNewCat] = useState('');
-  const [newCatErr, setNewCatErr] = useState('');
-  const [photoStatus, setPhotoStatus] = useState('');
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+const inputCls = (hasError: boolean) =>
+  `w-full rounded-xl border bg-surface px-3 py-2 text-sm text-ink outline-none transition-colors ${
+    hasError ? 'border-danger focus:border-danger' : 'border-line focus:border-accent'
+  }`;
 
-  // Vista previa: puede ser un DataURL (recién elegida) o una foto ya
-  // guardada en disco (`local-img://`), que necesita resolverse por IPC.
-  const previewSrc = useResolvedImageSrc(form.photoData, form.imageUrl);
-
-  const fileRef = useRef<HTMLInputElement>(null);
-  const nameRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editingItem) {
-      setForm({
-        name: editingItem.name, category: editingItem.category, subcategory: editingItem.subcategory,
-        price: String(editingItem.price), priority: editingItem.priority, wishlist: editingItem.wishlist,
-        purchaseMonth: editingItem.purchaseMonth || '',
-        installments: editingItem.installments ? String(editingItem.installments.count) : '',
-        installmentAmount: editingItem.installments ? String(editingItem.installments.amount) : '',
-        installmentStart: editingItem.installments?.startMonth || '',
-        imageUrl: editingItem.imageUrl, photoData: editingItem.imageData, purchaseUrl: editingItem.purchaseUrl,
-        storeName: editingItem.storeName, storeLocation: editingItem.storeLocation,
-        height: editingItem.dimensions?.height ? String(editingItem.dimensions.height) : '',
-        width: editingItem.dimensions?.width ? String(editingItem.dimensions.width) : '',
-        depth: editingItem.dimensions?.depth ? String(editingItem.dimensions.depth) : '',
-        notes: editingItem.notes || '',
-        brand: editingItem.brand || '',
-        model: editingItem.model || '',
-        color: editingItem.color || '',
-        warranty: editingItem.warranty && editingItem.warranty > 0 ? String(editingItem.warranty) : '',
-        orderNumber: editingItem.orderNumber || '',
-      });
-      setErrors({}); setPhotoStatus(''); setActiveTab('basico');
-    } else {
-      setForm(EMPTY);
-    }
-  }, [editingItem]);
-
-  // Editar un artículo exige ver el formulario: si estaba colapsado, se abre.
-  useEffect(() => {
-    if (editingItem) setItemFormOpen(true);
-  }, [editingItem, setItemFormOpen]);
-
-  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((p) => ({ ...p, [key]: value }));
-  const clearError = (key: keyof Errors) => setErrors((e) => ({ ...e, [key]: undefined }));
-
-  const subcategories = useMemo(() => {
-    const names = new Map<string, string>();
-    for (const it of items) {
-      if (!it.subcategory) continue;
-      if (form.category && !sameText(it.category, form.category)) continue;
-      const k = it.subcategory.toLocaleLowerCase('es');
-      if (!names.has(k)) names.set(k, it.subcategory);
-    }
-    return Array.from(names.values()).sort((a, b) => a.localeCompare(b, 'es'));
-  }, [items, form.category]);
-
-  const handlePhoto = async (file: File) => {
-    setPhotoBusy(true); setPhotoStatus('Procesando foto…'); setErrors((e) => ({ ...e, imageUrl: undefined }));
-    try {
-      const dataUrl = await optimizePhoto(file);
-      update('photoData', dataUrl); setPhotoStatus(`Foto lista (${estimateKb(dataUrl)} KB).`);
-    } catch (err: any) {
-      setPhotoStatus(''); setErrors((e) => ({ ...e, imageUrl: err.message || 'No se pudo procesar la imagen.' }));
-    } finally { setPhotoBusy(false); if (fileRef.current) fileRef.current.value = ''; }
-  };
-
-  const cancelEdit = () => { setEditingItem(null); setForm(EMPTY); setErrors({}); setPhotoStatus(''); setActiveTab('basico'); };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); if (photoBusy || submitting) return;
-    const errs: Errors = {};
-    const name = normalizeLabel(form.name, 60);
-    if (!name) errs.name = 'Ingresá el nombre del artículo.';
-    const category = form.category;
-    if (!category) errs.category = 'Elegí una categoría.';
-    const price = parsePrice(form.price);
-    if (!Number.isFinite(price) || price < 0) errs.price = 'Precio inválido.';
-    const imageUrl = normalizeUrl(form.imageUrl, true);
-    if (imageUrl === null) errs.imageUrl = 'URL de imagen inválida.';
-    const purchaseUrl = normalizeUrl(form.purchaseUrl);
-    if (purchaseUrl === null) errs.purchaseUrl = 'URL de compra inválida.';
-    const h = parseDimension(form.height), w = parseDimension(form.width), d = parseDimension(form.depth);
-    if ([h, w, d].some((v) => Number.isNaN(v))) errs.dimensions = 'Medidas inválidas.';
-    const countRaw = form.installments.trim(), amountRaw = form.installmentAmount.trim();
-    let installments: Installments | null = null;
-    if (countRaw || amountRaw) {
-      const c = Number(countRaw), a = parsePrice(amountRaw);
-      if (!Number.isInteger(c) || c < 1 || c > 72) errs.installments = 'Cuotas: entre 1 y 72.';
-      else if (!Number.isFinite(a) || a <= 0) errs.installments = 'Valor inválido.';
-      else installments = {
-        count: c,
-        amount: Math.round(a * 100) / 100,
-        // Una sola cuota no necesita calendario: no hay progreso que seguir.
-        startMonth: c > 1 ? normalizeMonth(form.installmentStart) : null,
-      };
-    }
-    const warrantyRaw = form.warranty.trim();
-    let warranty: number | null = null;
-    if (warrantyRaw) {
-      const months = Number(warrantyRaw);
-      if (!Number.isInteger(months) || months < 0) errs.warranty = 'Usá meses enteros (ej. 12).';
-      else warranty = months;
-    }
-
-    if (Object.keys(errs).some((k) => errs[k as keyof Errors])) {
-      setErrors(errs);
-      if (errs.name || errs.category || errs.price || errs.warranty) setActiveTab('basico');
-      else if (errs.installments) setActiveTab('financiero');
-      else setActiveTab('detalles');
-      return;
-    }
-
-    const dimensions = [h, w, d].some((v) => typeof v === 'number') ? { height: typeof h === 'number' ? h : null, width: typeof w === 'number' ? w : null, depth: typeof d === 'number' ? d : null } : null;
-
-    const itemData = {
-      name, category, subcategory: normalizeLabel(form.subcategory, SUBCATEGORY_MAX_LENGTH), price: Math.round(price * 100) / 100,
-      priority: PRIORITY.has(form.priority) ? form.priority : 'media' as const, wishlist: form.wishlist,
-      purchaseMonth: form.purchaseMonth || null, purchaseUrl: purchaseUrl || '', imageUrl: imageUrl || '', imageData: form.photoData || '',
-      storeName: normalizeLabel(form.storeName, 80), storeLocation: normalizeLabel(form.storeLocation, 120),
-      dimensions, installments, notes: normalizeLabel(form.notes, 250),
-      brand: normalizeLabel(form.brand, 40),
-      model: normalizeLabel(form.model, 40),
-      color: normalizeLabel(form.color, 30),
-      warranty,
-      orderNumber: normalizeLabel(form.orderNumber, 50),
-    };
-
-    setSubmitting(true);
-
-    try {
-      // La foto se escribe en disco ANTES de tocar el estado: SQLite debe
-      // guardar sólo `local-img://...`, nunca el Base64.
-      let imageData = form.photoData;
-
-      if (imageData.startsWith('data:image/')) {
-        imageData = await persistImageToDisk(imageData, editingItem?.id ?? createId());
-      }
-
-      // Si reemplazamos o quitamos una foto que vivía en disco, el archivo
-      // anterior queda huérfano: lo borramos sin bloquear el guardado.
-      if (
-        editingItem &&
-        isLocalImageRef(editingItem.imageData) &&
-        editingItem.imageData !== imageData
-      ) {
-        void deleteDiskImage(editingItem.imageData);
-      }
-
-      const finalData = { ...itemData, imageData };
-
-      if (editingItem) { updateItem({ ...editingItem, ...finalData }); setEditingItem(null); }
-      else { addItem(finalData); }
-
-      setForm(EMPTY); setErrors({}); setPhotoStatus(''); setActiveTab('basico'); nameRef.current?.focus();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const createCat = () => {
-    const name = normalizeLabel(newCat, CATEGORY_MAX_LENGTH);
-    if (!name) { setNewCatErr('Escribí un nombre.'); return; }
-    if (!addCategory(name)) { setNewCatErr('Esa categoría ya existe.'); return; }
-    update('category', name); setNewCat(''); setNewCatErr(''); setShowCatCreator(false);
-  };
-
-  const inputCls = (invalid: boolean) => `w-full min-h-[44px] px-3 border rounded-xl bg-surface text-ink text-[0.95rem] focus:outline-none focus:border-accent focus:ring-4 focus:ring-accent/20 transition-colors ${invalid ? 'border-danger' : 'border-line-strong'}`;
-
+function Field({
+  label,
+  error,
+  hint,
+  children,
+}: {
+  label: string;
+  error?: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
-    <section
-      id="item-form"
-      className="border border-line rounded-3xl bg-surface shadow-soft flex flex-col overflow-hidden"
-    >
-      <div className="p-3 border-b border-line flex justify-between items-center gap-2 bg-surface-2/30">
-        <h2 className="min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={() => setItemFormOpen(!itemFormOpen)}
-            aria-expanded={itemFormOpen}
-            aria-controls={itemFormOpen ? 'item-form-body' : undefined}
-            className="flex w-full items-center gap-2 rounded-xl px-1 py-1 text-left transition-colors hover:text-accent-ink focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent/20"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block text-base font-semibold tracking-tight text-ink">{editingItem ? 'Editar artículo' : 'Agregar artículo'}</span>
-              <span className="block text-xs text-muted mt-0.5">{editingItem ? 'Modificá los datos.' : 'Completá los datos.'}</span>
-            </span>
-            <span className="sr-only">{itemFormOpen ? 'Ocultar formulario' : 'Mostrar formulario'}</span>
-            <Icon name="chevron" size={16} className={`shrink-0 text-muted transition-transform duration-200 ${itemFormOpen ? 'rotate-180' : ''}`} />
-          </button>
-        </h2>
-        {editingItem && <button type="button" onClick={cancelEdit} className="shrink-0 text-xs font-semibold text-muted hover:text-danger hover:bg-danger-soft px-2 py-1 rounded-md transition-colors">Cancelar</button>}
+    <label className="block space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-bold text-ink-soft">{label}</span>
+        {hint && <span className="text-[0.68rem] text-muted">{hint}</span>}
       </div>
-
-      {itemFormOpen && (
-        <div id="item-form-body" className="flex flex-1 flex-col">
-          <div className="flex px-2 pt-2 bg-surface-2/30 border-b border-line">
-            {[{ id: 'basico', label: 'Básico', icon: 'list' }, { id: 'financiero', label: 'Finanzas', icon: 'finance' }, { id: 'detalles', label: 'Extras', icon: 'store' }].map((tab) => (
-              <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id as any)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-1 text-xs sm:text-sm font-semibold rounded-t-xl transition-colors ${activeTab === tab.id ? 'bg-surface text-accent-ink border-x border-t border-line -mb-[1px]' : 'text-muted hover:text-ink'}`}>
-                <Icon name={tab.icon} size={14} />{tab.label}
-              </button>
-            ))}
-          </div>
-
-          <form onSubmit={submit} noValidate className="flex-1 flex flex-col">
-        <div className="p-4 sm:p-5 h-[400px] overflow-y-auto">
-
-          {/* ================= PESTAÑA: BÁSICO ================= */}
-          {activeTab === 'basico' && (
-            <div className="grid gap-4 animate-in fade-in">
-              <Field label="Nombre del artículo" error={errors.name}>
-                <input ref={nameRef} data-item-form-name type="text" maxLength={60} placeholder="Ej. Heladera con freezer" value={form.name} onChange={(e) => { update('name', e.target.value); clearError('name'); }} className={inputCls(!!errors.name)} />
-              </Field>
-              <Field label="Categoría" error={errors.category}>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <select value={form.category} onChange={(e) => { update('category', e.target.value); clearError('category'); }} className={`${inputCls(!!errors.category)} pr-10 appearance-none cursor-pointer`}>
-                      <option value="" disabled>Elegí una categoría</option>
-                      {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                  </div>
-                  <button type="button" onClick={() => setShowCatCreator((s) => !s)} aria-expanded={showCatCreator} aria-label={showCatCreator ? 'Cancelar nueva categoría' : 'Crear nueva categoría'} className="w-11 h-11 shrink-0 border border-line-strong rounded-xl bg-surface text-muted hover:border-accent hover:bg-accent-soft hover:text-accent-ink transition-colors flex items-center justify-center"><Icon name="add" size={17} /></button>
-                </div>
-                {showCatCreator && (
-                  <div className="grid gap-1.5 mt-2 p-2.5 border border-dashed border-line-strong rounded-xl bg-surface-2 animate-in slide-in-from-top-2 duration-200">
-                    <label className="text-xs font-semibold text-ink-soft">Nueva categoría</label>
-                    <div className="flex items-center gap-2">
-                      <input type="text" maxLength={40} value={newCat} placeholder="Ej. Iluminación" onChange={(e) => { setNewCat(e.target.value); setNewCatErr(''); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createCat(); } if (e.key === 'Escape') setShowCatCreator(false); }} className="flex-1 min-h-[38px] px-3 border border-line-strong rounded-xl bg-surface text-ink text-sm focus:outline-none focus:border-accent" />
-                      <button type="button" onClick={createCat} className="min-h-[38px] px-3.5 rounded-xl bg-accent text-accent-on text-sm font-semibold hover:bg-accent-ink transition-colors">Crear</button>
-                      <button type="button" onClick={() => { setShowCatCreator(false); setNewCatErr(''); }} aria-label="Cerrar nueva categoría" className="grid place-items-center w-9 h-9 rounded-xl text-muted hover:bg-danger-soft hover:text-danger transition-colors"><Icon name="cancel" size={15} /></button>
-                    </div>
-                    {newCatErr && <p className="text-xs text-danger">{newCatErr}</p>}
-                  </div>
-                )}
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Precio total" error={errors.price}>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-semibold">$</span>
-                    <input type="text" inputMode="decimal" maxLength={20} placeholder="1.200.000" value={form.price} onChange={(e) => { update('price', e.target.value); clearError('price'); }} className={`${inputCls(!!errors.price)} pl-7 tabular-nums`} />
-                  </div>
-                </Field>
-                <Field label="Prioridad">
-                  <div className="relative">
-                    <select value={form.priority} onChange={(e) => update('priority', e.target.value as any)} className={`${inputCls(false)} pr-10 appearance-none cursor-pointer`}>
-                      <option value="urgente">Urgente</option>
-                      <option value="alta">Alta</option>
-                      <option value="media">Media</option>
-                      <option value="baja">Baja</option>
-                    </select>
-                    <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                  </div>
-                </Field>
-              </div>
-
-              <div className="grid gap-3">
-                <p className="text-sm font-bold text-ink-soft flex items-center gap-2"><Icon name="brand" size={16} /> Detalles del producto</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Marca">
-                    <input type="text" maxLength={40} placeholder="Ej. Samsung" value={form.brand} onChange={(e) => update('brand', e.target.value)} className={inputCls(false)} />
-                  </Field>
-                  <Field label="Modelo">
-                    <input type="text" maxLength={40} placeholder="Ej. RT38" value={form.model} onChange={(e) => update('model', e.target.value)} className={inputCls(false)} />
-                  </Field>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Color">
-                    <input type="text" maxLength={30} placeholder="Ej. Negro" value={form.color} onChange={(e) => update('color', e.target.value)} className={inputCls(false)} />
-                  </Field>
-                  <Field label="Garantía (meses)" error={errors.warranty}>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      step={1}
-                      placeholder="Ej. 12"
-                      value={form.warranty}
-                      onChange={(e) => { update('warranty', e.target.value); clearError('warranty'); }}
-                      className={`${inputCls(!!errors.warranty)} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
-                    />
-                  </Field>
-                </div>
-              </div>
-
-              <label className={`flex items-start gap-2.5 p-3 border rounded-xl cursor-pointer transition-colors ${form.wishlist ? 'border-accent bg-accent-soft' : 'border-line bg-surface-2 hover:bg-surface-3'}`}>
-                <input type="checkbox" checked={form.wishlist} onChange={(e) => update('wishlist', e.target.checked)} className="sr-only peer" />
-                <span className={`relative w-[38px] h-[22px] mt-0.5 rounded-full shrink-0 transition-colors ${form.wishlist ? 'bg-accent' : 'bg-line-strong'}`}><span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${form.wishlist ? 'translate-x-4' : ''}`} /></span>
-                <span className="grid gap-px min-w-0"><span className="text-sm font-semibold text-ink">Wishlist / Futuro</span><span className="text-xs text-muted leading-tight mt-0.5">No suma al presupuesto.</span></span>
-              </label>
-            </div>
-          )}
-
-          {/* ================= PESTAÑA: FINANCIERO ================= */}
-          {activeTab === 'financiero' && (
-            <div className="grid gap-4 animate-in fade-in">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Mes planificado">
-                  <div className="relative w-full">
-                    {/* Capa visual (Lo que se ve) */}
-                    <div className="flex items-center justify-between w-full min-h-[44px] px-3 border border-line-strong rounded-xl bg-surface text-sm pointer-events-none">
-                      <span className={form.purchaseMonth ? 'text-ink' : 'text-muted'}>
-                        {form.purchaseMonth ? form.purchaseMonth : 'Seleccionar mes'}
-                      </span>
-                      <Icon name="calendar" size={16} className="text-muted" />
-                    </div>
-
-                    {/* Capa interactiva (El input real, invisible) */}
-                    <input
-                      type="month"
-                      value={form.purchaseMonth}
-                      onChange={(e) => update('purchaseMonth', e.target.value)}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none"
-                    />
-                  </div>
-                </Field>
-                <Field label="Subcategoría (Opcional)">
-                  <input type="text" maxLength={40} list="subcategory-options" placeholder="Ej. Living" value={form.subcategory} onChange={(e) => update('subcategory', e.target.value)} className={inputCls(false)} />
-                  <datalist id="subcategory-options">{subcategories.map((s) => <option key={s} value={s} />)}</datalist>
-                </Field>
-              </div>
-
-              <div className="grid gap-3">
-                <div className="grid grid-cols-3 gap-3">
-
-                  {/* Input de Cuotas */}
-                  <Field label="Cuotas">
-                    <div className="relative">
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={72}
-                        placeholder="Ej. 6"
-                        value={form.installments}
-                        onChange={(e) => { update('installments', e.target.value); clearError('installments'); }}
-                        className={`${inputCls(!!errors.installments)} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
-                      />
-                    </div>
-                  </Field>
-
-                  {/* Input de Valor de Cuota */}
-                  <div className="col-span-2">
-                    <Field label="Valor de cada cuota">
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-semibold">$</span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="50.000"
-                          value={form.installmentAmount}
-                          onChange={(e) => { update('installmentAmount', e.target.value); clearError('installments'); }}
-                          className={`${inputCls(!!errors.installments)} pl-7 tabular-nums`}
-                        />
-                      </div>
-                    </Field>
-                  </div>
-
-                </div>
-
-                {/* El mensaje de error va afuera del grid para no desalinear */}
-                {errors.installments && <p className="text-xs text-danger px-1">{errors.installments}</p>}
-              </div>
-
-              {Number(form.installments) > 1 && (
-                <Field label="Mes 1ª cuota (opcional)">
-                  <div className="relative w-full">
-                    <div className="flex items-center justify-between w-full min-h-[44px] px-3 border border-line-strong rounded-xl bg-surface text-sm pointer-events-none">
-                      <span className={form.installmentStart ? 'text-ink' : 'text-muted'}>
-                        {form.installmentStart ? formatMonth(form.installmentStart) : 'Se asume el mes de compra'}
-                      </span>
-                      <Icon name="calendar" size={16} className="text-muted" />
-                    </div>
-                    <input
-                      type="month"
-                      value={form.installmentStart}
-                      onChange={(e) => update('installmentStart', e.target.value)}
-                      aria-label="Mes de la primera cuota"
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none"
-                    />
-                  </div>
-                  <p className="text-[0.7rem] text-muted leading-tight">
-                    Sirve para calcular cuántas cuotas van. Si lo dejás vacío, al marcar la compra se usa el mes
-                    planificado o el actual.
-                  </p>
-                </Field>
-              )}
-
-              <p className="text-xs text-muted leading-relaxed bg-surface-2 p-3 rounded-xl border border-line">
-                Calculá tu gasto fijo mensual sumando las cuotas de tus compras. Las cuotas terminadas dejan de sumar.
-              </p>
-            </div>
-          )}
-
-          {/* ================= PESTAÑA: DETALLES ================= */}
-          {activeTab === 'detalles' && (
-            <div className="grid gap-4 animate-in fade-in">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="URL del artículo" error={errors.purchaseUrl}>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon name="globe" size={14} /></span>
-                    <input type="url" placeholder="https://..." value={form.purchaseUrl} onChange={(e) => { update('purchaseUrl', e.target.value); clearError('purchaseUrl'); }} className={`${inputCls(!!errors.purchaseUrl)} pl-8 text-sm`} />
-                  </div>
-                </Field>
-                <Field label="Nro de orden">
-                  <input type="text" maxLength={50} placeholder="Ej. 1234-5678" value={form.orderNumber} onChange={(e) => update('orderNumber', e.target.value)} className={inputCls(false)} />
-                </Field>
-              </div>
-              <Field label={<>Notas <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-2 text-muted text-[0.62rem] font-bold uppercase">Opcional</span></>}>
-                <textarea rows={2} maxLength={250} placeholder="Ej. Color, medidas..." value={form.notes} onChange={(e) => update('notes', e.target.value)} className={`${inputCls(false)} py-2 resize-none min-h-[60px]`} />
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="URL de la imagen" error={errors.imageUrl}>
-                  <input type="url" placeholder="https://.../foto.jpg" value={form.imageUrl} onChange={(e) => { update('imageUrl', e.target.value); clearError('imageUrl'); }} className={inputCls(!!errors.imageUrl)} />
-                </Field>
-                <div className="flex items-end">
-                  <label className="inline-flex w-full items-center justify-center min-h-[44px] px-3 border border-dashed border-line-strong rounded-xl bg-surface-2 text-ink-soft text-xs font-semibold cursor-pointer hover:border-accent hover:text-accent-ink transition-colors">
-                    <input ref={fileRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhoto(f); }} />
-                    {form.photoData ? 'Cambiar foto' : 'Subir foto'}
-                  </label>
-                </div>
-              </div>
-              {form.photoData && previewSrc && (
-                <div className="relative w-full h-24 rounded-xl overflow-hidden border border-line">
-                  <img src={previewSrc} alt="Previsualización" className="w-full h-full object-cover" />
-                  <button type="button" onClick={() => { update('photoData', ''); setPhotoStatus(''); }} aria-label="Quitar foto" className="absolute top-1 right-1 grid place-items-center w-6 h-6 rounded-full bg-black/80 text-white hover:bg-danger transition-colors"><Icon name="cancel" size={14} /></button>
-                </div>
-              )}
-              {photoStatus && <p className="text-xs text-accent-ink font-semibold">{photoStatus}</p>}
-              <div className="border-t border-line pt-4 mt-1">
-                <p className="text-sm font-bold text-ink-soft mb-3 flex items-center gap-2"><Icon name="store" size={16} /> Tienda Física</p>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <Field label="Comercio"><input type="text" placeholder="Ej. Bazar" value={form.storeName} onChange={(e) => update('storeName', e.target.value)} className={inputCls(false)} /></Field>
-                  <Field label="Ubicación"><input type="text" placeholder="Ej. Av. Rivadavia" value={form.storeLocation} onChange={(e) => update('storeLocation', e.target.value)} className={inputCls(false)} /></Field>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <Field label="Alto (cm)"><input type="text" inputMode="numeric" value={form.height} onChange={(e) => { update('height', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
-                  <Field label="Ancho (cm)"><input type="text" inputMode="numeric" value={form.width} onChange={(e) => { update('width', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
-                  <Field label="Prof. (cm)"><input type="text" inputMode="numeric" value={form.depth} onChange={(e) => { update('depth', e.target.value); clearError('dimensions'); }} className={inputCls(!!errors.dimensions)} /></Field>
-                </div>
-                {errors.dimensions && <p className="text-xs text-danger mt-2">{errors.dimensions}</p>}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="p-4 border-t border-line bg-surface mt-auto">
-          <button type="submit" disabled={photoBusy || submitting} className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-xl bg-accent text-accent-on font-semibold hover:bg-accent-ink transition-colors disabled:opacity-60 shadow-sm">
-            <Icon name={editingItem ? 'check' : 'add'} size={17} />
-            {submitting ? 'Guardando…' : editingItem ? 'Guardar cambios' : (form.wishlist ? 'Agregar a wishlist' : 'Agregar a la lista')}
-          </button>
-        </div>
-          </form>
-        </div>
-      )}
-    </section>
+      {children}
+      {error && <p className="text-xs font-medium text-danger">{error}</p>}
+    </label>
   );
 }
 
-function Field({ label, error, children }: { label: React.ReactNode; error?: string; children: React.ReactNode }) {
-  return <div className="grid gap-1.5 min-w-0"><label className="text-sm font-semibold text-ink-soft truncate">{label}</label>{children}{error && <p className="text-xs text-danger">{error}</p>}</div>;
+function buildInitialState(
+  editingItem: Item | null,
+  categories: string[],
+  defaultWishlist: boolean,
+): FormState {
+  if (!editingItem) {
+    return {
+      name: '',
+      category: categories[0] ?? 'Otros',
+      subcategory: '',
+      price: '',
+      priority: 'media',
+      wishlist: defaultWishlist,
+      purchaseMonth: '',
+      hasInstallments: false,
+      installmentsCount: '3',
+      installmentsAmount: '',
+      purchaseUrl: '',
+      storeName: '',
+      storeLocation: '',
+      brand: '',
+      model: '',
+      color: '',
+      width: '',
+      height: '',
+      depth: '',
+      warranty: '',
+      orderNumber: '',
+      notes: '',
+      imageUrl: '',
+      imageData: null,
+    };
+  }
+
+  return {
+    name: editingItem.name,
+    category: editingItem.category,
+    subcategory: editingItem.subcategory ?? '',
+    price: editingItem.price > 0 ? String(editingItem.price) : '',
+    priority: editingItem.priority,
+    wishlist: editingItem.wishlist,
+    purchaseMonth: editingItem.purchaseMonth ?? '',
+    hasInstallments: Boolean(editingItem.installments),
+    installmentsCount: editingItem.installments ? String(editingItem.installments.count) : '3',
+    installmentsAmount: editingItem.installments ? String(editingItem.installments.amount) : '',
+    purchaseUrl: editingItem.purchaseUrl ?? '',
+    storeName: editingItem.storeName ?? '',
+    storeLocation: editingItem.storeLocation ?? '',
+    brand: editingItem.brand ?? '',
+    model: editingItem.model ?? '',
+    color: editingItem.color ?? '',
+    width: editingItem.dimensions?.width ? String(editingItem.dimensions.width) : '',
+    height: editingItem.dimensions?.height ? String(editingItem.dimensions.height) : '',
+    depth: editingItem.dimensions?.depth ? String(editingItem.dimensions.depth) : '',
+    warranty: editingItem.warranty ? String(editingItem.warranty) : '',
+    orderNumber: editingItem.orderNumber ?? '',
+    notes: editingItem.notes ?? '',
+    imageUrl: editingItem.imageUrl ?? '',
+    imageData: editingItem.imageData ?? null,
+  };
+}
+
+export function ItemForm() {
+  const { items, categories, addItem, updateItem } = useData();
+  const { prefs } = usePrefs();
+  const { view, editingItem, setEditingItem } = useUI();
+  const { showToast } = useToast();
+
+  const fields = useMemo(
+    () => ({ ...DEFAULT_ITEM_FIELDS, ...(prefs.itemFields ?? {}) }),
+    [prefs.itemFields],
+  );
+
+  const [activeTab, setActiveTab] = useState<FormTab>('basic');
+  const [form, setForm] = useState<FormState>(() =>
+    buildInitialState(editingItem, categories, view === 'wishlist'),
+  );
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [isCompressing, setIsCompressing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setForm(buildInitialState(editingItem, categories, view === 'wishlist'));
+    setErrors({});
+    setActiveTab('basic');
+  }, [editingItem, categories, view]);
+
+  const hasDetailsTab = fields.store || fields.specs || fields.warranty || fields.orderNumber;
+  const hasExtraTab = fields.notes || fields.photo;
+
+  const visibleTabs = useMemo(() => {
+    const tabs: { id: FormTab; label: string }[] = [{ id: 'basic', label: 'Básico' }];
+    if (hasDetailsTab) tabs.push({ id: 'details', label: 'Detalles' });
+    if (hasExtraTab) tabs.push({ id: 'extra', label: 'Notas y foto' });
+    return tabs;
+  }, [hasDetailsTab, hasExtraTab]);
+
+  useEffect(() => {
+    if (!visibleTabs.some((t) => t.id === activeTab)) {
+      setActiveTab('basic');
+    }
+  }, [visibleTabs, activeTab]);
+
+  const subcategoriesForCategory = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of items) {
+      if (item.category === form.category && item.subcategory) {
+        set.add(item.subcategory);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [items, form.category]);
+
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (errors[key]) {
+      setErrors((prev) => ({ ...prev, [key]: undefined }));
+    }
+  };
+
+  const handlePriceChange = (rawPrice: string) => {
+    update('price', rawPrice);
+    if (form.hasInstallments) {
+      const parsedPrice = parsePrice(rawPrice);
+      const count = parseInt(form.installmentsCount, 10);
+      if (!Number.isNaN(parsedPrice) && parsedPrice > 0 && count > 0) {
+        update('installmentsAmount', String(Math.round((parsedPrice / count) * 100) / 100));
+      }
+    }
+  };
+
+  const handleInstallmentsCountChange = (rawCount: string) => {
+    update('installmentsCount', rawCount);
+    const parsedPrice = parsePrice(form.price);
+    const count = parseInt(rawCount, 10);
+    if (!Number.isNaN(parsedPrice) && parsedPrice > 0 && count > 0) {
+      update('installmentsAmount', String(Math.round((parsedPrice / count) * 100) / 100));
+    }
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      showToast('La imagen supera el tamaño máximo permitido.');
+      return;
+    }
+
+    setIsCompressing(true);
+    try {
+      const dataUrl = await compressImage(file);
+      const targetId = editingItem?.id ?? `draft-${Date.now()}`;
+      const storedRef = await persistImageToDisk(dataUrl, targetId);
+
+      update('imageData', storedRef);
+      update('imageUrl', '');
+    } catch {
+      showToast('No se pudo procesar la imagen seleccionada.');
+    } finally {
+      setIsCompressing(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+
+    const cleanName = normalizeLabel(form.name, NAME_MAX_LENGTH);
+    const parsedPrice = form.price.trim() ? parsePrice(form.price) : 0;
+
+    const nextErrors: Partial<Record<keyof FormState, string>> = {};
+    if (!cleanName) {
+      nextErrors.name = 'Ingresá un nombre para el artículo.';
+    }
+    if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
+      nextErrors.price = 'Ingresá un monto válido (0 o mayor).';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      setActiveTab('basic');
+      return;
+    }
+
+    const subcategory = fields.subcategory
+      ? normalizeLabel(form.subcategory, SUBCATEGORY_MAX_LENGTH)
+      : (editingItem?.subcategory ?? '');
+
+    const priority: Priority = fields.priority
+      ? form.priority
+      : (editingItem?.priority ?? 'media');
+
+    const purchaseMonth = fields.purchaseMonth
+      ? (form.purchaseMonth.trim() || null)
+      : (editingItem?.purchaseMonth ?? null);
+
+    let installments: Installments | null = editingItem?.installments ?? null;
+    if (fields.installments) {
+      if (form.hasInstallments) {
+        const count = Math.max(1, parseInt(form.installmentsCount, 10) || 1);
+        const amount = parsePrice(form.installmentsAmount);
+        installments = {
+          count,
+          amount: !Number.isNaN(amount) && amount > 0
+            ? amount
+            : Math.round((parsedPrice / count) * 100) / 100,
+        };
+      } else {
+        installments = null;
+      }
+    }
+
+    const purchaseUrl = fields.purchaseUrl
+      ? form.purchaseUrl.trim()
+      : (editingItem?.purchaseUrl ?? '');
+
+    const storeName = fields.store
+      ? normalizeLabel(form.storeName, 80)
+      : (editingItem?.storeName ?? '');
+
+    const storeLocation = fields.store
+      ? normalizeLabel(form.storeLocation, 80)
+      : (editingItem?.storeLocation ?? '');
+
+    const brand = fields.specs ? normalizeLabel(form.brand, 60) : (editingItem?.brand ?? '');
+    const model = fields.specs ? normalizeLabel(form.model, 60) : (editingItem?.model ?? '');
+    const color = fields.specs ? normalizeLabel(form.color, 40) : (editingItem?.color ?? '');
+
+    let dimensions: Dimensions | null = editingItem?.dimensions ?? null;
+    if (fields.specs) {
+      const w = parseFloat(form.width);
+      const h = parseFloat(form.height);
+      const d = parseFloat(form.depth);
+      const hasAnyDim =
+        (Number.isFinite(w) && w > 0) ||
+        (Number.isFinite(h) && h > 0) ||
+        (Number.isFinite(d) && d > 0);
+      dimensions = hasAnyDim
+        ? {
+            width: Number.isFinite(w) && w > 0 ? w : null,
+            height: Number.isFinite(h) && h > 0 ? h : null,
+            depth: Number.isFinite(d) && d > 0 ? d : null,
+          }
+        : null;
+    }
+
+    let warranty: number | null = editingItem?.warranty ?? null;
+    if (fields.warranty) {
+      const parsedWarranty = parseInt(form.warranty, 10);
+      warranty = Number.isFinite(parsedWarranty) && parsedWarranty > 0 ? parsedWarranty : null;
+    }
+
+    const orderNumber = fields.orderNumber
+      ? normalizeLabel(form.orderNumber, 60)
+      : (editingItem?.orderNumber ?? '');
+
+    const notes = fields.notes
+      ? normalizeLabel(form.notes, NOTES_MAX_LENGTH)
+      : (editingItem?.notes ?? '');
+
+    const imageUrl = fields.photo
+      ? form.imageUrl.trim()
+      : (editingItem?.imageUrl ?? '');
+
+    const imageData = fields.photo
+      ? (form.imageData ?? '')
+      : (editingItem?.imageData ?? '');
+
+    const payload = {
+      name: cleanName,
+      category: form.category || 'Otros',
+      subcategory,
+      price: Math.round(parsedPrice * 100) / 100,
+      priority,
+      wishlist: form.wishlist,
+      purchaseMonth,
+      installments,
+      purchaseUrl,
+      storeName,
+      storeLocation,
+      brand,
+      model,
+      color,
+      dimensions,
+      warranty,
+      orderNumber,
+      notes,
+      imageUrl,
+      imageData,
+    };
+
+    if (editingItem) {
+      updateItem({
+        ...editingItem,
+        ...payload,
+        bought: payload.wishlist ? false : editingItem.bought,
+      });
+    } else {
+      addItem(payload);
+      setForm(buildInitialState(null, categories, view === 'wishlist'));
+      setActiveTab('basic');
+    }
+  };
+
+  // Resuelve tanto `local-img://...` como DataURL o URL externa para el <img>
+  const previewImage = useResolvedImageSrc(
+    form.imageData ?? '',
+    form.imageUrl.trim(),
+  );
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-3xl border border-line bg-surface p-4 shadow-soft sm:p-5"
+    >
+      {/* CABECERA */}
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-base font-bold text-ink">
+          <Icon name={editingItem ? 'edit' : 'plus'} size={18} className="text-accent" />
+          {editingItem ? 'Editar artículo' : 'Nuevo artículo'}
+        </h2>
+        {editingItem && (
+          <button
+            type="button"
+            onClick={() => setEditingItem(null)}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-xl border border-line bg-surface-2 px-2.5 py-1 text-xs font-semibold text-muted transition-colors hover:border-line-strong hover:text-ink"
+          >
+            <Icon name="cancel" size={14} />
+            Cancelar
+          </button>
+        )}
+      </div>
+
+      {/* PESTAÑAS DINÁMICAS */}
+      {visibleTabs.length > 1 && (
+        <div role="tablist" className="mb-4 flex gap-1.5 border-b border-line pb-2.5">
+          {visibleTabs.map((t) => {
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(t.id)}
+                className={`cursor-pointer rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                  active
+                    ? 'bg-accent text-accent-on shadow-sm'
+                    : 'bg-surface-2/60 text-muted hover:text-ink'
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* PESTAÑA: BÁSICO */}
+      {activeTab === 'basic' && (
+        <div className="space-y-3.5">
+          <Field label="Nombre del artículo *" error={errors.name}>
+            <input
+              type="text"
+              placeholder="Ej. Heladera No Frost Samsung"
+              maxLength={NAME_MAX_LENGTH}
+              value={form.name}
+              onChange={(e) => update('name', e.target.value)}
+              className={inputCls(Boolean(errors.name))}
+            />
+          </Field>
+
+          <div className={`grid gap-3 ${fields.subcategory ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
+            <Field label="Categoría">
+              <div className="relative">
+                <select
+                  value={form.category}
+                  onChange={(e) => update('category', e.target.value)}
+                  className={`${inputCls(false)} cursor-pointer appearance-none pr-9`}
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <Icon
+                  name="chevron"
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+                />
+              </div>
+            </Field>
+
+            {fields.subcategory && (
+              <Field label="Subcategoría">
+                <input
+                  type="text"
+                  list="depa-subcategories"
+                  placeholder="Ej. Electrodomésticos"
+                  maxLength={SUBCATEGORY_MAX_LENGTH}
+                  value={form.subcategory}
+                  onChange={(e) => update('subcategory', e.target.value)}
+                  className={inputCls(false)}
+                />
+                <datalist id="depa-subcategories">
+                  {subcategoriesForCategory.map((sub) => (
+                    <option key={sub} value={sub} />
+                  ))}
+                </datalist>
+              </Field>
+            )}
+          </div>
+
+          <div className={`grid gap-3 ${fields.priority ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <Field label="Precio total" error={errors.price}>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="0"
+                value={form.price}
+                onChange={(e) => handlePriceChange(e.target.value)}
+                className={`${inputCls(Boolean(errors.price))} font-bold tabular-nums`}
+              />
+            </Field>
+
+            {fields.priority && (
+              <Field label="Prioridad">
+                <div className="relative">
+                  <select
+                    value={form.priority}
+                    onChange={(e) => update('priority', e.target.value as Priority)}
+                    className={`${inputCls(false)} cursor-pointer appearance-none pr-9`}
+                  >
+                    {PRIORITIES.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon
+                    name="chevron"
+                    size={16}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+                  />
+                </div>
+              </Field>
+            )}
+          </div>
+
+          {fields.purchaseMonth && (
+            <Field label="Mes estimado de compra">
+              <input
+                type="month"
+                value={form.purchaseMonth}
+                onChange={(e) => update('purchaseMonth', e.target.value)}
+                className={inputCls(false)}
+              />
+            </Field>
+          )}
+
+          {fields.installments && (
+            <div className="rounded-2xl border border-line bg-surface-2/40 p-3">
+              <label className="flex cursor-pointer items-center justify-between gap-2">
+                <span className="text-xs font-bold text-ink">Pago en cuotas</span>
+                <input
+                  type="checkbox"
+                  checked={form.hasInstallments}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    update('hasInstallments', checked);
+                    if (checked) {
+                      const parsedPrice = parsePrice(form.price);
+                      const count = parseInt(form.installmentsCount, 10) || 3;
+                      if (!Number.isNaN(parsedPrice) && parsedPrice > 0) {
+                        update(
+                          'installmentsAmount',
+                          String(Math.round((parsedPrice / count) * 100) / 100),
+                        );
+                      }
+                    }
+                  }}
+                  className="h-4 w-4 cursor-pointer accent-accent"
+                />
+              </label>
+
+              {form.hasInstallments && (
+                <div className="mt-3 grid grid-cols-2 gap-2.5">
+                  <Field label="Cantidad">
+                    <input
+                      type="number"
+                      min={1}
+                      max={72}
+                      value={form.installmentsCount}
+                      onChange={(e) => handleInstallmentsCountChange(e.target.value)}
+                      className={`${inputCls(false)} tabular-nums`}
+                    />
+                  </Field>
+                  <Field label="Valor por cuota">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={form.installmentsAmount}
+                      onChange={(e) => update('installmentsAmount', e.target.value)}
+                      className={`${inputCls(false)} tabular-nums`}
+                    />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
+
+          {fields.purchaseUrl && (
+            <Field label="Link de compra">
+              <input
+                type="url"
+                placeholder="https://..."
+                value={form.purchaseUrl}
+                onChange={(e) => update('purchaseUrl', e.target.value)}
+                className={inputCls(false)}
+              />
+            </Field>
+          )}
+
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-2xl border border-line bg-surface-2/40 px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={form.wishlist}
+              onChange={(e) => update('wishlist', e.target.checked)}
+              className="h-4 w-4 cursor-pointer accent-accent"
+            />
+            <span className="text-xs font-semibold text-ink">
+              Guardar en Wishlist (idea a futuro, no suma al presupuesto)
+            </span>
+          </label>
+        </div>
+      )}
+
+      {/* PESTAÑA: DETALLES */}
+      {activeTab === 'details' && hasDetailsTab && (
+        <div className="space-y-3.5">
+          {fields.store && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Tienda / Local">
+                <input
+                  type="text"
+                  placeholder="Ej. Mercado Libre, Frávega"
+                  value={form.storeName}
+                  onChange={(e) => update('storeName', e.target.value)}
+                  className={inputCls(false)}
+                />
+              </Field>
+              <Field label="Ubicación / Sucursal">
+                <input
+                  type="text"
+                  placeholder="Ej. Online, Palermo"
+                  value={form.storeLocation}
+                  onChange={(e) => update('storeLocation', e.target.value)}
+                  className={inputCls(false)}
+                />
+              </Field>
+            </div>
+          )}
+
+          {fields.specs && (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Field label="Marca">
+                  <input
+                    type="text"
+                    placeholder="Ej. Samsung"
+                    value={form.brand}
+                    onChange={(e) => update('brand', e.target.value)}
+                    className={inputCls(false)}
+                  />
+                </Field>
+                <Field label="Modelo">
+                  <input
+                    type="text"
+                    placeholder="Ej. RT38"
+                    value={form.model}
+                    onChange={(e) => update('model', e.target.value)}
+                    className={inputCls(false)}
+                  />
+                </Field>
+                <Field label="Color">
+                  <input
+                    type="text"
+                    placeholder="Ej. Inox"
+                    value={form.color}
+                    onChange={(e) => update('color', e.target.value)}
+                    className={inputCls(false)}
+                  />
+                </Field>
+              </div>
+
+              <div>
+                <span className="mb-1.5 block text-xs font-bold text-ink-soft">
+                  Medidas en cm (Ancho × Alto × Prof.)
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    placeholder="Ancho"
+                    value={form.width}
+                    onChange={(e) => update('width', e.target.value)}
+                    className={`${inputCls(false)} tabular-nums`}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    placeholder="Alto"
+                    value={form.height}
+                    onChange={(e) => update('height', e.target.value)}
+                    className={`${inputCls(false)} tabular-nums`}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    placeholder="Prof."
+                    value={form.depth}
+                    onChange={(e) => update('depth', e.target.value)}
+                    className={`${inputCls(false)} tabular-nums`}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {(fields.warranty || fields.orderNumber) && (
+            <div className={`grid gap-3 ${fields.warranty && fields.orderNumber ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {fields.warranty && (
+                <Field label="Garantía (meses)">
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="12"
+                    value={form.warranty}
+                    onChange={(e) => update('warranty', e.target.value)}
+                    className={`${inputCls(false)} tabular-nums`}
+                  />
+                </Field>
+              )}
+
+              {fields.orderNumber && (
+                <Field label="N° de pedido / factura">
+                  <input
+                    type="text"
+                    placeholder="Ej. #98412"
+                    value={form.orderNumber}
+                    onChange={(e) => update('orderNumber', e.target.value)}
+                    className={inputCls(false)}
+                  />
+                </Field>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PESTAÑA: NOTAS Y FOTO */}
+      {activeTab === 'extra' && hasExtraTab && (
+        <div className="space-y-3.5">
+          {fields.notes && (
+            <Field label="Notas" hint={`${form.notes.length}/${NOTES_MAX_LENGTH}`}>
+              <textarea
+                rows={3}
+                maxLength={NOTES_MAX_LENGTH}
+                placeholder="Detalles de entrega, descuentos bancarios, comparativas..."
+                value={form.notes}
+                onChange={(e) => update('notes', e.target.value)}
+                className={`${inputCls(false)} resize-none`}
+              />
+            </Field>
+          )}
+
+          {fields.photo && (
+            <div className="space-y-2.5">
+              <span className="block text-xs font-bold text-ink-soft">Foto del artículo</span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isCompressing}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-surface-2 px-3 py-2 text-xs font-bold text-ink transition-colors hover:border-line-strong disabled:opacity-50"
+                >
+                  <Icon name="upload" size={14} />
+                  {isCompressing ? 'Procesando...' : 'Subir imagen'}
+                </button>
+
+                {(previewImage || form.imageData || form.imageUrl) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      update('imageData', null);
+                      update('imageUrl', '');
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-xl border border-danger/30 bg-danger-soft px-2.5 py-2 text-xs font-semibold text-danger"
+                  >
+                    <Icon name="trash" size={14} />
+                    Quitar
+                  </button>
+                )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </div>
+
+              <Field label="O pegar URL de imagen">
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={form.imageUrl}
+                  onChange={(e) => {
+                    update('imageUrl', e.target.value);
+                    if (e.target.value.trim()) update('imageData', null);
+                  }}
+                  className={inputCls(false)}
+                />
+              </Field>
+
+              {previewImage && (
+                <div className="overflow-hidden rounded-2xl border border-line bg-surface-2 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewImage}
+                    alt="Vista previa"
+                    className="mx-auto max-h-40 rounded-xl object-contain"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* BOTÓN GUARDAR */}
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-line pt-3.5">
+        <span className="text-xs font-semibold text-muted tabular-nums">
+          {parsePrice(form.price) > 0 ? money(parsePrice(form.price)) : ''}
+        </span>
+        <button
+          type="submit"
+          className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-xs font-bold text-accent-on shadow-sm transition-all hover:brightness-110"
+        >
+          <Icon name="check" size={16} />
+          {editingItem ? 'Guardar cambios' : 'Agregar artículo'}
+        </button>
+      </div>
+    </form>
+  );
 }

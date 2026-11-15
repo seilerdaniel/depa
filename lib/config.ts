@@ -1,6 +1,6 @@
 import type {
   Priority, SortMode, StatusFilter, Prefs, ViewMode, AccountType, TransactionType,
-  CardAccentColor, CardSurfaceStyle, HomeCardConfig, HomeLayout, HomeModuleId, StartView,
+  CardAccentColor, CardSurfaceStyle, HomeCardConfig, HomeLayout, HomeModuleId, StartView, ItemFieldVisibility,
 } from './types';
 
 export const DEFAULT_CATEGORIES = [
@@ -185,6 +185,20 @@ export const STORAGE_KEYS = {
   transactions: 'depa.transactions.v1',
 } as const;
 
+export const DEFAULT_ITEM_FIELDS: ItemFieldVisibility = {
+  subcategory: true,
+  priority: true,
+  purchaseMonth: true,
+  installments: true,
+  purchaseUrl: true,
+  store: true,
+  specs: true,
+  warranty: true,
+  orderNumber: true,
+  notes: true,
+  photo: true,
+};
+
 export const DEFAULT_PREFS: Prefs = {
   sort: 'prioridad',
   category: 'todas',
@@ -199,7 +213,26 @@ export const DEFAULT_PREFS: Prefs = {
   homeLayout: 'cards-lg',
   homeCards: createDefaultHomeCards(),
   startView: 'home',
+  itemFields: { ...DEFAULT_ITEM_FIELDS },
 };
+
+export const ITEM_FIELD_OPTIONS: {
+  key: keyof ItemFieldVisibility;
+  label: string;
+  hint: string;
+}[] = [
+  { key: 'subcategory', label: 'Subcategoría', hint: 'Ej. Heladera, Sillón' },
+  { key: 'priority', label: 'Prioridad', hint: 'Urgente, Alta, Media o Baja' },
+  { key: 'purchaseMonth', label: 'Mes de compra', hint: 'Planificación mensual en el Dashboard' },
+  { key: 'installments', label: 'Financiación / Cuotas', hint: 'Cantidad y valor de cuota' },
+  { key: 'purchaseUrl', label: 'Link de compra', hint: 'URL directa a la publicación' },
+  { key: 'store', label: 'Tienda y ubicación', hint: 'Comercio, sucursal o barrio' },
+  { key: 'specs', label: 'Especificaciones físicas', hint: 'Marca, modelo, color y medidas' },
+  { key: 'warranty', label: 'Garantía', hint: 'Meses de cobertura' },
+  { key: 'orderNumber', label: 'Número de pedido', hint: 'Comprobante o seguimiento' },
+  { key: 'notes', label: 'Notas', hint: 'Observaciones adicionales' },
+  { key: 'photo', label: 'Foto del artículo', hint: 'Imagen desde archivo o URL' },
+];
 
 export const MAX_PHOTO_SIDE = 900;
 export const MAX_PHOTO_DATA_LENGTH = 150_000;
