@@ -60,11 +60,25 @@ const TX_META: Record<
 };
 
 const COLOR_OPTIONS: { id: string; label: string; swatch: string }[] = [
-  { id: 'accent', label: 'Verde', swatch: 'var(--accent)' },
+  // Tokens base del tema
+  { id: 'accent', label: 'Verde Depa', swatch: 'var(--accent)' },
   { id: 'low', label: 'Menta', swatch: 'var(--low)' },
   { id: 'medium', label: 'Ámbar', swatch: 'var(--medium)' },
   { id: 'high', label: 'Naranja', swatch: 'var(--high)' },
   { id: 'danger', label: 'Rojo', swatch: 'var(--danger)' },
+
+  // Billeteras virtuales y bancos (Argentina)
+  { id: '#009EE3', label: 'Mercado Pago / Nación', swatch: '#009EE3' },
+  { id: '#6C4CE6', label: 'Brubank / Personal Pay', swatch: '#6C4CE6' },
+  { id: '#FF6B00', label: 'Naranja X', swatch: '#FF6B00' },
+  { id: '#FA7268', label: 'Ualá', swatch: '#FA7268' },
+  { id: '#E30613', label: 'Santander / ICBC', swatch: '#E30613' },
+  { id: '#FA6400', label: 'Banco Galicia', swatch: '#FA6400' },
+  { id: '#004481', label: 'BBVA', swatch: '#004481' },
+  { id: '#0055A5', label: 'Banco Macro', swatch: '#0055A5' },
+  { id: '#00A859', label: 'Modo / Provincia', swatch: '#00A859' },
+  { id: '#38BDF8', label: 'Prex / Lemon', swatch: '#38BDF8' },
+  { id: '#10B981', label: 'Dólar / Efectivo USD', swatch: '#10B981' },
 ];
 
 const COLOR_VAR: Record<string, string> = {
