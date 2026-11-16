@@ -15,6 +15,7 @@ import type {
 import { ACCOUNT_SORT_OPTIONS, CURRENCY_OPTIONS } from '@/lib/config';
 import { Icon } from './Icon';
 import { RecurringExpensesSection } from './RecurringExpensesSection';
+import { DebtsSection } from './DebtsSection';
 import { StatementImporterModal } from './StatementImporterModal';
 
 // ==========================================
@@ -1830,6 +1831,11 @@ export function FinanceSection() {
           </ul>
         )}
       </div>
+
+      {/* ==========================================
+          DEUDAS Y COMPROMISOS CON PAGOS PARCIALES
+      ========================================== */}
+      <DebtsSection />
 
       {/* ==========================================
           GASTOS FIJOS Y SERVICIOS DEL HOGAR

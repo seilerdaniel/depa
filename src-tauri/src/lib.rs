@@ -126,6 +126,26 @@ fn migrations() -> Vec<Migration> {
     ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "create_debts_table",
+            sql: "
+      CREATE TABLE IF NOT EXISTS debts (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        creditor TEXT NOT NULL DEFAULT '',
+        totalAmount REAL NOT NULL DEFAULT 0,
+        paidAmount REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'ARS',
+        dueDate TEXT,
+        priority TEXT NOT NULL DEFAULT 'media',
+        notes TEXT NOT NULL DEFAULT '',
+        createdAt INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_debts_created ON debts(createdAt DESC);
+    ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

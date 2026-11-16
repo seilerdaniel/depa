@@ -29,7 +29,7 @@ function readableMax(value: number): number {
 
 export function CashflowForecast() {
   const { items } = useData();
-  const { accounts, transactions, recurringExpenses } = useFinance();
+  const { accounts, transactions, recurringExpenses, debts } = useFinance();
   const { prefs } = usePrefs();
 
   const [incomeDraft, setIncomeDraft] = useState<string | null>(null);
@@ -46,8 +46,9 @@ export function CashflowForecast() {
       recurringExpenses,
       new Date(),
       prefs.usdRate,
+      debts,
     );
-  }, [items, transactions, accounts, incomeDraft, recurringExpenses, prefs.usdRate]);
+  }, [items, transactions, accounts, incomeDraft, recurringExpenses, prefs.usdRate, debts]);
 
   const peak = useMemo(
     () =>
@@ -168,6 +169,7 @@ export function CashflowForecast() {
             const installmentsHeight = (month.activeInstallments / peak) * PLOT_HEIGHT;
             const recurringHeight = (month.recurringTotal / peak) * PLOT_HEIGHT;
             const plannedHeight = (month.plannedPurchases / peak) * PLOT_HEIGHT;
+            const debtHeight = (month.debtOutflow / peak) * PLOT_HEIGHT;
 
             const baseY = PLOT_TOP + PLOT_HEIGHT;
             const incomeX = centerX - BAR_WIDTH - BAR_GAP / 2;
@@ -224,6 +226,22 @@ export function CashflowForecast() {
                 >
                   <title>{month.label} · Cuotas vigentes: {money(month.activeInstallments)}</title>
                 </rect>
+                <rect
+                  x={outflowX}
+                  y={
+                    baseY -
+                    plannedHeight -
+                    recurringHeight -
+                    installmentsHeight -
+                    debtHeight
+                  }
+                  width={BAR_WIDTH}
+                  height={Math.max(debtHeight, month.debtOutflow > 0 ? 2 : 0)}
+                  rx={4}
+                  className="fill-danger"
+                >
+                  <title>{month.label} · Deudas y compromisos: {money(month.debtOutflow)}</title>
+                </rect>
 
                 {/* Etiqueta del mes */}
                 <text
@@ -255,6 +273,10 @@ export function CashflowForecast() {
           <span className="inline-flex items-center gap-1.5">
             <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-medium" />
             Compras planificadas
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-danger" />
+            Deudas
           </span>
         </figcaption>
       </figure>

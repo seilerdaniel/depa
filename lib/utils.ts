@@ -23,8 +23,8 @@ import {
 } from './config';
 import type {
   Account, AccountType, CardAccentColor, CardSurfaceStyle, CashflowForecastResult,
-  CashflowMonth, CreditCardStatement, Currency, Dimensions, HomeCardConfig, HomeModuleId,
-  Installments, Item, ItemOption, Prefs, RecurringExpense, RecurringExpenseState,
+  CashflowMonth, CreditCardStatement, Currency, Debt, Dimensions, HomeCardConfig, HomeModuleId,
+  Installments, Item, ItemOption, Prefs, Priority, RecurringExpense, RecurringExpenseState,
   RecurringExpenseStatus, RecurringFrequency, SavingsGoal, Transaction, TransactionType,
 } from './types';
 
@@ -524,8 +524,48 @@ export function normalizeSavingsGoal(raw: unknown): SavingsGoal | null {
 }
 
 // ==========================================
-// GASTOS FIJOS Y SERVICIOS DEL HOGAR
+// DEUDAS Y COMPROMISOS
 // ==========================================
+const DEBT_DATE_RE = /^\d{4}-(0[1-9]|1[0-2])(-([0-2]\d|3[0-1]))?$/;
+
+/** Fecha límite de una deuda: 'YYYY-MM-DD', 'YYYY-MM' o null. */
+function normalizeDebtDueDate(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return DEBT_DATE_RE.test(trimmed) ? trimmed : null;
+}
+
+export function normalizeDebt(raw: unknown): Debt | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  const title = normalizeLabel(r.title, 60);
+  if (!title) return null;
+
+  const total = roundMoney(Number(r.totalAmount));
+  if (!Number.isFinite(total) || total <= 0) return null;
+
+  // Un abono nunca puede superar el total ni ser negativo.
+  const rawPaid = roundMoney(Number(r.paidAmount) || 0);
+  const paid = Number.isFinite(rawPaid) ? Math.min(total, Math.max(0, rawPaid)) : 0;
+
+  const priority: Priority = PRIORITY.has(r.priority as Priority)
+    ? (r.priority as Priority)
+    : 'media';
+
+  return {
+    id: typeof r.id === 'string' && r.id ? r.id : createId(),
+    title,
+    creditor: normalizeLabel(r.creditor, 60),
+    totalAmount: total,
+    paidAmount: paid,
+    currency: normalizeCurrency(r.currency),
+    dueDate: normalizeDebtDueDate(r.dueDate),
+    priority,
+    notes: normalizeLabel(r.notes, 250),
+    createdAt: Number.isFinite(r.createdAt) ? (r.createdAt as number) : Date.now(),
+  };
+}
 const RECURRING_FREQUENCIES: ReadonlySet<RecurringFrequency> = new Set([
   'mensual', 'bimestral', 'anual',
 ]);
@@ -956,6 +996,7 @@ export function buildCashflowForecast(
   recurringExpenses: RecurringExpense[] = [],
   now: Date = new Date(),
   usdRate: number = DEFAULT_USD_RATE,
+  debts: Debt[] = [],
 ): CashflowForecastResult {
   const currencyOf = new Map(accounts.map((a) => [a.id, a.currency ?? 'ARS'] as const));
 
@@ -1006,6 +1047,7 @@ export function buildCashflowForecast(
     let installmentsTotal = 0;
     let plannedTotal = 0;
     let recurringTotal = 0;
+    let debtTotal = 0;
 
     for (const item of items) {
       if (item.wishlist) continue;
@@ -1061,7 +1103,22 @@ export function buildCashflowForecast(
     }
 
     const recurring = roundMoney(recurringTotal);
-    const totalOutflow = roundMoney(activeInstallments + plannedPurchases + recurring);
+
+    // Deudas y compromisos: pesan en el mes en que vencen, por el saldo que
+    // todavía falta pagar (no el total original). Un pago parcial ya hecho
+    // no debe volver a proyectarse.
+    for (const debt of debts) {
+      const due = debt.dueDate;
+      if (!due || !due.startsWith(key)) continue;
+
+      const remaining = roundMoney(debt.totalAmount - debt.paidAmount);
+      if (remaining <= 0) continue;
+
+      debtTotal += toArs(remaining, debt.currency ?? 'ARS', usdRate);
+    }
+
+    const debtOutflow = roundMoney(debtTotal);
+    const totalOutflow = roundMoney(activeInstallments + plannedPurchases + recurring + debtOutflow);
     const netCashflow = roundMoney(estimatedIncome - totalOutflow);
     runningLiquidity = roundMoney(runningLiquidity + netCashflow);
 
@@ -1072,6 +1129,7 @@ export function buildCashflowForecast(
       activeInstallments,
       plannedPurchases,
       recurringTotal: recurring,
+      debtOutflow,
       totalOutflow,
       netCashflow,
       projectedLiquidity: runningLiquidity,

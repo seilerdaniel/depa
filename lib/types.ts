@@ -236,6 +236,27 @@ export interface SavingsGoal {
 }
 
 // ==========================================
+// DEUDAS Y COMPROMISOS (Etapa 6)
+// ==========================================
+export interface Debt {
+  id: string;
+  /** Concepto de la deuda o compromiso (ej. 'Depósito Alquiler', 'Mochila'). */
+  title: string;
+  /** Acreedor / persona / entidad (ej. 'Silvana', 'Negro', 'Inmobiliaria'). */
+  creditor: string;
+  /** Monto total original de la deuda. */
+  totalAmount: number;
+  /** Monto abonado hasta el momento (permite pagos parciales). */
+  paidAmount: number;
+  currency: Currency;
+  /** Fecha límite o mes estimado opcional ('YYYY-MM-DD' o 'YYYY-MM'). */
+  dueDate?: string | null;
+  priority: Priority;
+  notes: string;
+  createdAt: number;
+}
+
+// ==========================================
 // TARJETAS DE CRÉDITO Y FLUJO DE CAJA (Etapa 4.3)
 // ==========================================
 export interface CreditCardStatement {
@@ -265,6 +286,8 @@ export interface CashflowMonth {
   plannedPurchases: number;
   /** Gastos fijos y servicios activos que caen en ese mes. */
   recurringTotal: number;
+  /** Saldo pendiente de deudas/compromisos que vencen en ese mes. */
+  debtOutflow: number;
   totalOutflow: number;
   netCashflow: number;
   /** Liquidez acumulada al cierre del mes. */

@@ -8,17 +8,18 @@ import { arrayMove } from '@dnd-kit/sortable';
 import {
   loadItems, loadCategories, loadPrefs,
   saveItems, savePrefs, saveCategories, mergeItemCategories,
-  loadAccounts, loadTransactions, loadSavingsGoals, loadRecurringExpenses, saveAllState,
+  loadAccounts, loadTransactions, loadSavingsGoals, loadRecurringExpenses, loadDebts,
+  saveAllState,
 } from '@/lib/storage';
 import { DEFAULT_CATEGORIES, DEFAULT_PREFS, CATEGORY_MAX_LENGTH } from '@/lib/config';
 import {
   createId, normalizeLabel, normalizeItem, normalizeAccount, normalizeTransaction,
   normalizeSavingsGoal, pruneTransactions, roundMoney, sameText, normalizeMonth,
   currentMonthKey, normalizePrefs, normalizeBillingDay, normalizeRecurringExpense,
-  convertCurrency, normalizeUsdRate,
+  convertCurrency, normalizeUsdRate, normalizeDebt,
 } from '@/lib/utils';
 import type {
-  Account, Currency, Item, Prefs, RecurringExpense, SavingsGoal, Transaction, View,
+  Account, Currency, Debt, Item, Prefs, RecurringExpense, SavingsGoal, Transaction, View,
 } from '@/lib/types';
 import {
   isTauri, isLocalImageRef, persistImageToDisk, readDiskImageAsDataUrl,
@@ -44,6 +45,7 @@ interface AppState {
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
   recurringExpenses: RecurringExpense[];
+  debts: Debt[];
   view: View;
   ready: boolean;
   editingItem: Item | null;
@@ -100,6 +102,17 @@ type Action =
       /** Mes pagado en formato 'YYYY-MM'. */
       paidMonth: string;
       /** Movimiento a registrar (null si se pagó sin cuenta). */
+      transaction: Transaction | null;
+    }
+  | { type: 'add-debt'; debt: Debt }
+  | { type: 'update-debt'; debt: Debt }
+  | { type: 'delete-debt'; id: string }
+  | {
+      type: 'pay-debt';
+      id: string;
+      /** Monto ya acotado al saldo restante. */
+      amount: number;
+      /** Movimiento a registrar (null si se abonó sin cuenta). */
       transaction: Transaction | null;
     };
 
@@ -458,6 +471,48 @@ const reducer = (s: AppState, a: Action): AppState => {
       };
     }
 
+    // ---------- DEUDAS Y COMPROMISOS ----------
+    case 'add-debt':
+      return { ...s, debts: [a.debt, ...s.debts] };
+
+    case 'update-debt':
+      return {
+        ...s,
+        debts: s.debts.map((d) => (d.id === a.debt.id ? a.debt : d)),
+      };
+
+    case 'delete-debt':
+      return { ...s, debts: s.debts.filter((d) => d.id !== a.id) };
+
+    case 'pay-debt': {
+      const debt = s.debts.find((d) => d.id === a.id);
+      if (!debt || a.amount <= 0) return s;
+
+      // Un único dispatch: deuda, saldo y movimiento cambian juntos.
+      const next: AppState = {
+        ...s,
+        debts: s.debts.map((d) =>
+          d.id === a.id
+            ? {
+                ...d,
+                paidAmount: Math.min(
+                  d.totalAmount,
+                  roundMoney(d.paidAmount + a.amount),
+                ),
+              }
+            : d,
+        ),
+      };
+
+      if (!a.transaction) return next;
+
+      return {
+        ...next,
+        accounts: applyToBalances(next.accounts, a.transaction),
+        transactions: [a.transaction, ...next.transactions],
+      };
+    }
+
     default:
       return s;
   }
@@ -471,6 +526,7 @@ const initialState: AppState = {
   transactions: [],
   savingsGoals: [],
   recurringExpenses: [],
+  debts: [],
   view: 'home',
   ready: false,
   editingItem: null,
@@ -501,6 +557,7 @@ export interface BackupExportData {
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
   recurringExpenses: RecurringExpense[];
+  debts: Debt[];
   version: number;
 }
 
@@ -513,6 +570,7 @@ export interface BackupImportData {
   transactions?: unknown[];
   savingsGoals?: unknown[];
   recurringExpenses?: unknown[];
+  debts?: unknown[];
 }
 
 export interface DataValue {
@@ -556,6 +614,7 @@ export interface FinanceValue {
   transactions: Transaction[];
   savingsGoals: SavingsGoal[];
   recurringExpenses: RecurringExpense[];
+  debts: Debt[];
   addAccount: (draft: Omit<Account, 'id' | 'createdAt'>) => boolean;
   updateAccount: (account: Account) => boolean;
   deleteAccount: (id: string) => void;
@@ -585,6 +644,19 @@ export interface FinanceValue {
     id: string,
     accountId?: string | null,
     customAmount?: number,
+  ) => boolean;
+  addDebt: (draft: Omit<Debt, 'id' | 'createdAt'>) => boolean;
+  updateDebt: (debt: Debt) => boolean;
+  deleteDebt: (id: string) => void;
+  /**
+   * Abono parcial (o total) de una deuda. Si hay cuenta, crea el gasto y
+   * descuenta el saldo en la misma operación.
+   */
+  payDebtInstallment: (
+    debtId: string,
+    amount: number,
+    accountId?: string | null,
+    customNote?: string,
   ) => boolean;
 }
 
@@ -792,7 +864,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       transactions: snapshot.transactions,
       savingsGoals: snapshot.savingsGoals,
       recurringExpenses: snapshot.recurringExpenses,
-      version: 4,
+      debts: snapshot.debts,
+      version: 5,
     };
   }, []);
 
@@ -817,7 +890,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
     async function initDB() {
-      const [items, categories, accounts, rawTransactions, savingsGoals, recurringExpenses, prefs] =
+      const [items, categories, accounts, rawTransactions, savingsGoals, recurringExpenses, debts, prefs] =
         await Promise.all([
           loadItems(),
           loadCategories(),
@@ -825,6 +898,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           loadTransactions(),
           loadSavingsGoals(),
           loadRecurringExpenses(),
+          loadDebts(),
           loadPrefs(),
         ]);
 
@@ -867,6 +941,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           transactions,
           savingsGoals,
           recurringExpenses,
+          debts,
           view: prefs.startView,
         },
       });
@@ -892,6 +967,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         accounts: state.accounts,
         savingsGoals: state.savingsGoals,
         recurringExpenses: state.recurringExpenses,
+        debts: state.debts,
         transactions: state.transactions,
       });
 
@@ -1696,6 +1772,105 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   // ==========================================
+  // DEUDAS Y COMPROMISOS
+  // ==========================================
+  const addDebt = useCallback<FinanceValue['addDebt']>((draft) => {
+    const debt = normalizeDebt({ ...draft, id: createId(), createdAt: Date.now() });
+    if (!debt) return false;
+
+    dispatch({ type: 'add-debt', debt });
+    announce(`Deuda ${debt.title} creada`);
+    showToast('Deuda creada');
+    return true;
+  }, [announce, showToast]);
+
+  const updateDebt = useCallback<FinanceValue['updateDebt']>((debt) => {
+    const current = stateRef.current.debts.find((d) => d.id === debt.id);
+    if (!current) return false;
+
+    const next = normalizeDebt({
+      ...current,
+      ...debt,
+      id: current.id,
+      createdAt: current.createdAt,
+    });
+    if (!next) return false;
+
+    dispatch({ type: 'update-debt', debt: next });
+    showToast('Deuda actualizada');
+    return true;
+  }, [showToast]);
+
+  const deleteDebt = useCallback<FinanceValue['deleteDebt']>((id) => {
+    const debt = stateRef.current.debts.find((d) => d.id === id);
+    if (!debt) return;
+
+    dispatch({ type: 'delete-debt', id });
+    announce(`Deuda ${debt.title} eliminada`);
+    showToast(`Deuda "${debt.title}" eliminada. Sus movimientos se conservan.`);
+  }, [announce, showToast]);
+
+  const payDebtInstallment = useCallback<FinanceValue['payDebtInstallment']>(
+    (debtId, amount, accountId, customNote) => {
+      const current = stateRef.current;
+      const debt = current.debts.find((d) => d.id === debtId);
+      if (!debt) return false;
+
+      // Nunca se abona más de lo que falta: el saldo restante es el techo.
+      const remaining = roundMoney(debt.totalAmount - debt.paidAmount);
+      if (remaining <= 0) return false;
+
+      const requested = roundMoney(Number(amount));
+      if (!Number.isFinite(requested) || requested <= 0) return false;
+
+      const applied = roundMoney(Math.min(requested, remaining));
+      if (applied <= 0) return false;
+
+      let transaction: Transaction | null = null;
+      if (accountId) {
+        const account = current.accounts.find((a) => a.id === accountId);
+        if (!account) return false;
+
+        // La deuda vive en su moneda; la cuenta se debita en la suya.
+        const converted = convertCurrency(
+          applied,
+          debt.currency ?? 'ARS',
+          account.currency ?? 'ARS',
+          current.prefs.usdRate,
+        );
+        if (!Number.isFinite(converted) || converted <= 0) return false;
+
+        const creditor = debt.creditor ? ` (${debt.creditor})` : '';
+        const note =
+          normalizeLabel(customNote, 120) ||
+          `Pago deuda: ${debt.title}${creditor}`;
+
+        transaction = {
+          id: createId(),
+          accountId,
+          destinationAccountId: null,
+          type: 'gasto',
+          amount: converted,
+          date: Date.now(),
+          category: 'Deudas',
+          notes: note,
+          linkedItemId: null,
+        };
+      }
+
+      dispatch({ type: 'pay-debt', id: debtId, amount: applied, transaction });
+
+      const settled = roundMoney(debt.paidAmount + applied) >= debt.totalAmount;
+      announce(
+        settled ? `Deuda ${debt.title} saldada` : `Abono de ${debt.title} registrado`,
+      );
+      showToast(settled ? 'Deuda saldada por completo' : 'Abono registrado');
+      return true;
+    },
+    [announce, showToast],
+  );
+
+  // ==========================================
   // FUNCIONES DE BACKUP (EXPORTAR / IMPORTAR)
   // ==========================================
   const exportData = useCallback<DataValue['exportData']>(() => {
@@ -1767,6 +1942,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .map((entry: unknown) => normalizeRecurringExpense(entry))
         .filter((e: RecurringExpense | null): e is RecurringExpense => e !== null);
 
+      // Backups viejos no traen deudas: fallback vacío.
+      const rawDebts = Array.isArray(parsed.debts) ? parsed.debts : [];
+      const validDebts = rawDebts
+        .map((entry: unknown) => normalizeDebt(entry))
+        .filter((d: Debt | null): d is Debt => d !== null);
+
       const nextPrefs = normalizePrefs(parsed.prefs);
 
       dispatch({
@@ -1779,6 +1960,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           transactions: validTransactions,
           savingsGoals: validGoals,
           recurringExpenses: validRecurring,
+          debts: validDebts,
           view: 'list',
         },
       });
@@ -1890,16 +2072,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     transactions: state.transactions,
     savingsGoals: state.savingsGoals,
     recurringExpenses: state.recurringExpenses,
+    debts: state.debts,
     addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
     addTransactionsBatch,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
     addRecurringExpense, updateRecurringExpense, deleteRecurringExpense, payRecurringExpense,
+    addDebt, updateDebt, deleteDebt, payDebtInstallment,
   }), [
-    state.accounts, state.transactions, state.savingsGoals, state.recurringExpenses,
+    state.accounts, state.transactions, state.savingsGoals, state.recurringExpenses, state.debts,
     addAccount, updateAccount, deleteAccount, addTransaction, updateTransaction, deleteTransaction,
     addTransactionsBatch,
     addSavingsGoal, updateSavingsGoal, deleteSavingsGoal, contributeToGoal,
     addRecurringExpense, updateRecurringExpense, deleteRecurringExpense, payRecurringExpense,
+    addDebt, updateDebt, deleteDebt, payDebtInstallment,
   ]);
 
   const dataValue = useMemo<DataValue>(() => ({

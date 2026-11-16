@@ -14,10 +14,11 @@ import {
   normalizeTransaction,
   normalizeSavingsGoal,
   normalizeRecurringExpense,
+  normalizeDebt,
   cleanFilterValue,
 } from './utils';
 import type {
-  Account, Item, Prefs, RecurringExpense, SavingsGoal, Transaction,
+  Account, Debt, Item, Prefs, RecurringExpense, SavingsGoal, Transaction,
 } from './types';
 
 // ==========================================
@@ -489,6 +490,64 @@ export function saveSavingsGoals(
 }
 
 // ==========================================
+// DEUDAS Y COMPROMISOS (SQLite)
+// ==========================================
+export async function loadDebts(): Promise<Debt[]> {
+  try {
+    const db = await getDb();
+    const rows = await db.select<Record<string, unknown>[]>(
+      'SELECT * FROM debts ORDER BY createdAt DESC',
+    );
+    return rows.map(normalizeDebt).filter((d): d is Debt => d !== null);
+  } catch {
+    return [];
+  }
+}
+
+async function writeDebtsDirect(debts: Debt[]) {
+  const db = await getDb();
+  await deleteRemovedRows(db, 'debts', 'id', debts.map((d) => d.id));
+
+  const query = `
+    INSERT INTO debts (id, title, creditor, totalAmount, paidAmount, currency, dueDate, priority, notes, createdAt)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT(id) DO UPDATE SET
+      title=excluded.title, creditor=excluded.creditor,
+      totalAmount=excluded.totalAmount, paidAmount=excluded.paidAmount,
+      currency=excluded.currency, dueDate=excluded.dueDate,
+      priority=excluded.priority, notes=excluded.notes
+  `;
+
+  for (const d of debts) {
+    await db.execute(query, [
+      d.id,
+      d.title,
+      d.creditor,
+      d.totalAmount,
+      d.paidAmount,
+      d.currency ?? 'ARS',
+      d.dueDate ?? null,
+      d.priority,
+      d.notes,
+      d.createdAt,
+    ]);
+  }
+}
+
+export function saveDebts(
+  debts: Debt[],
+): Promise<{ success: boolean; error?: unknown }> {
+  return enqueueWrite(async () => {
+    try {
+      await writeDebtsDirect(debts);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error };
+    }
+  });
+}
+
+// ==========================================
 // GASTOS FIJOS Y SERVICIOS (SQLite)
 // ==========================================
 export async function loadRecurringExpenses(): Promise<RecurringExpense[]> {
@@ -562,6 +621,7 @@ export function saveAllState(data: {
   savingsGoals: SavingsGoal[];
   transactions: Transaction[];
   recurringExpenses: RecurringExpense[];
+  debts: Debt[];
 }): Promise<{ success: boolean; error?: unknown }> {
   return enqueueWrite(async () => {
     try {
@@ -570,6 +630,7 @@ export function saveAllState(data: {
       await writeAccountsDirect(data.accounts);
       await writeSavingsGoalsDirect(data.savingsGoals);
       await writeRecurringExpensesDirect(data.recurringExpenses);
+      await writeDebtsDirect(data.debts);
       await writeTransactionsDirect(data.transactions);
       return { success: true };
     } catch (error) {
