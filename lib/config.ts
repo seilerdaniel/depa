@@ -1,6 +1,7 @@
 import type {
   Priority, SortMode, StatusFilter, Prefs, ViewMode, AccountType, TransactionType,
-  CardAccentColor, CardSurfaceStyle, HomeCardConfig, HomeLayout, HomeModuleId, StartView, ItemFieldVisibility,
+  AccountSortMode, Currency, CardAccentColor, CardSurfaceStyle, HomeCardConfig, HomeLayout,
+  HomeModuleId, StartView, ItemFieldVisibility,
 } from './types';
 
 export const DEFAULT_CATEGORIES = [
@@ -38,6 +39,29 @@ export const START_VIEW_OPTIONS: readonly { id: StartView; label: string; hint: 
 
 export const ACCOUNT_TYPES: ReadonlySet<AccountType> = new Set(['banco', 'billetera', 'efectivo', 'tarjeta']);
 export const TRANSACTION_TYPES: ReadonlySet<TransactionType> = new Set(['ingreso', 'gasto', 'transferencia']);
+
+export const CURRENCIES: ReadonlySet<Currency> = new Set(['ARS', 'USD']);
+
+/** Cotización de referencia por defecto (ARS por USD). */
+export const DEFAULT_USD_RATE = 1200;
+
+export const CURRENCY_OPTIONS: readonly { id: Currency; label: string; hint: string }[] = [
+  { id: 'ARS', label: 'Pesos (ARS)', hint: 'Saldo y movimientos en pesos' },
+  { id: 'USD', label: 'Dólares (USD)', hint: 'Se consolida con la cotización de referencia' },
+];
+
+export const ACCOUNT_SORT_MODES: ReadonlySet<AccountSortMode> = new Set([
+  'manual', 'balance-desc', 'balance-asc', 'type', 'name',
+]);
+
+/** Etiquetas del selector de orden de cuentas. */
+export const ACCOUNT_SORT_OPTIONS: readonly { id: AccountSortMode; label: string }[] = [
+  { id: 'manual', label: 'Orden de creación' },
+  { id: 'balance-desc', label: 'Mayor saldo primero' },
+  { id: 'balance-asc', label: 'Menor saldo / Deudas primero' },
+  { id: 'type', label: 'Por tipo' },
+  { id: 'name', label: 'Alfabético (A–Z)' },
+];
 
 // ==========================================
 // INICIO PERSONALIZABLE
@@ -210,6 +234,8 @@ export const DEFAULT_PREFS: Prefs = {
   wishlistCategory: 'todas',
   wishlistSubcategory: 'todas',
   viewMode: 'grid',
+  accountSort: 'manual',
+  usdRate: DEFAULT_USD_RATE,
   homeLayout: 'cards-lg',
   homeCards: createDefaultHomeCards(),
   startView: 'home',

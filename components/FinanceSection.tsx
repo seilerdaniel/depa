@@ -1,16 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { useData, useFinance } from '@/state/AppProvider';
+import { useData, useFinance, usePrefs } from '@/state/AppProvider';
 import {
-  money, parsePrice, foldText, formatMonth, currentMonthKey,
+  money, moneyWithCurrency, parsePrice, foldText, formatMonth, currentMonthKey,
   formatInstallmentProgress, getInstallmentStatus, analyzeCreditCardStatement,
-  normalizeBillingDay, roundMoney,
+  normalizeBillingDay, roundMoney, toArs,
   type InstallmentStatus,
 } from '@/lib/utils';
 import type {
-  Account, AccountType, Item, SavingsGoal, Transaction, TransactionType,
+  Account, AccountSortMode, AccountType, Currency, Item, SavingsGoal, Transaction,
+  TransactionType,
 } from '@/lib/types';
+import { ACCOUNT_SORT_OPTIONS, CURRENCY_OPTIONS } from '@/lib/config';
 import { Icon } from './Icon';
 import { RecurringExpensesSection } from './RecurringExpensesSection';
 import { StatementImporterModal } from './StatementImporterModal';
@@ -30,6 +32,14 @@ const ACCOUNT_ICON: Record<AccountType, string> = {
   billetera: 'wallet',
   efectivo: 'finance',
   tarjeta: 'finance',
+};
+
+/** Orden de "Por tipo": Efectivo → Billeteras → Bancos → Tarjetas. */
+const ACCOUNT_TYPE_RANK: Record<AccountType, number> = {
+  efectivo: 0,
+  billetera: 1,
+  banco: 2,
+  tarjeta: 3,
 };
 
 const TYPE_OPTIONS: { value: AccountType; label: string }[] = [
@@ -158,10 +168,11 @@ function parseSignedAmount(raw: string): number {
   return negative ? -parsed : parsed;
 }
 
-function signedAmount(transaction: Transaction): string {
-  if (transaction.type === 'ingreso') return `+${money(transaction.amount)}`;
-  if (transaction.type === 'gasto') return `−${money(transaction.amount)}`;
-  return money(transaction.amount);
+function signedAmount(transaction: Transaction, currency: Currency = 'ARS'): string {
+  const value = moneyWithCurrency(transaction.amount, currency);
+  if (transaction.type === 'ingreso') return `+${value}`;
+  if (transaction.type === 'gasto') return `−${value}`;
+  return value;
 }
 
 interface SelectFieldProps {
@@ -210,6 +221,7 @@ export function FinanceSection() {
     deleteSavingsGoal,
     contributeToGoal,
   } = useFinance();
+  const { prefs, setPrefs } = usePrefs();
 
   // --- Cuentas ---
   const [isAccountFormOpen, setAccountFormOpen] = useState(false);
@@ -217,6 +229,7 @@ export function FinanceSection() {
   const [accountDraftName, setAccountDraftName] = useState('');
   const [accountType, setAccountType] = useState<AccountType>('efectivo');
   const [accountBalance, setAccountBalance] = useState('0');
+  const [accountCurrency, setAccountCurrency] = useState<Currency>('ARS');
   const [accountColor, setAccountColor] = useState('accent');
   const [accountClosingDay, setAccountClosingDay] = useState('');
   const [accountDueDay, setAccountDueDay] = useState('');
@@ -277,9 +290,55 @@ export function FinanceSection() {
   const [isImporterOpen, setImporterOpen] = useState(false);
 
   const totalBalance = useMemo(
-    () => accounts.reduce((sum, account) => sum + account.balance, 0),
+    () =>
+      accounts.reduce(
+        (sum, account) =>
+          sum + toArs(account.balance, account.currency ?? 'ARS', prefs.usdRate),
+        0,
+      ),
+    [accounts, prefs.usdRate],
+  );
+
+  const accountCurrencyOf = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.currency ?? 'ARS'] as const)),
     [accounts],
   );
+
+  // Cambiar la moneda reinterpretaría todo el historial de la cuenta.
+  const editingAccountHasMovements = useMemo(() => {
+    if (!editingAccountId) return false;
+    return transactions.some(
+      (t) => t.accountId === editingAccountId || t.destinationAccountId === editingAccountId,
+    );
+  }, [transactions, editingAccountId]);
+
+  // Orden de las tarjetas de cuentas. `manual` respeta el orden del estado,
+  // que es el de creación (y el que se puede reordenar a futuro).
+  const accountSort: AccountSortMode = prefs.accountSort ?? 'manual';
+
+  const sortedAccounts = useMemo(() => {
+    if (accountSort === 'manual') return accounts;
+
+    const byName = (a: Account, b: Account) =>
+      a.name.localeCompare(b.name, 'es', { sensitivity: 'base', numeric: true });
+
+    const list = [...accounts];
+
+    switch (accountSort) {
+      case 'balance-desc':
+        return list.sort((a, b) => b.balance - a.balance || byName(a, b));
+      case 'balance-asc':
+        return list.sort((a, b) => a.balance - b.balance || byName(a, b));
+      case 'type':
+        return list.sort(
+          (a, b) => ACCOUNT_TYPE_RANK[a.type] - ACCOUNT_TYPE_RANK[b.type] || byName(a, b),
+        );
+      case 'name':
+        return list.sort(byName);
+      default:
+        return list;
+    }
+  }, [accounts, accountSort]);
 
   const accountNames = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.name] as const)),
@@ -393,8 +452,20 @@ export function FinanceSection() {
 
   const hasAccounts = accounts.length > 0;
   const originId = txAccountId || accounts[0]?.id || '';
+  const originCurrency: Currency = accountCurrencyOf.get(originId) ?? 'ARS';
   const isTransfer = txType === 'transferencia';
   const isExpense = txType === 'gasto';
+
+  // Una transferencia mueve un único monto: sólo se ofrecen cuentas de la
+  // misma moneda que el origen.
+  const transferTargets = useMemo(
+    () =>
+      accounts.filter(
+        (account) =>
+          account.id !== originId && (account.currency ?? 'ARS') === originCurrency,
+      ),
+    [accounts, originId, originCurrency],
+  );
 
   const focusMovementForm = () => {
     const form = document.getElementById('finance-movement-form');
@@ -412,6 +483,7 @@ export function FinanceSection() {
     setAccountDraftName('');
     setAccountType('efectivo');
     setAccountBalance('0');
+    setAccountCurrency('ARS');
     setAccountColor('accent');
     setAccountClosingDay('');
     setAccountDueDay('');
@@ -428,6 +500,7 @@ export function FinanceSection() {
     setAccountDraftName(account.name);
     setAccountType(account.type);
     setAccountBalance(formatAmount(account.balance));
+    setAccountCurrency(account.currency ?? 'ARS');
     setAccountColor(account.color);
     setAccountClosingDay(account.closingDay ? String(account.closingDay) : '');
     setAccountDueDay(account.dueDay ? String(account.dueDay) : '');
@@ -482,6 +555,7 @@ export function FinanceSection() {
         name,
         type: accountType,
         balance,
+        currency: accountCurrency,
         color: accountColor,
         closingDay,
         dueDay,
@@ -496,6 +570,7 @@ export function FinanceSection() {
         name,
         type: accountType,
         balance,
+        currency: accountCurrency,
         color: accountColor,
         closingDay,
         dueDay,
@@ -528,6 +603,10 @@ export function FinanceSection() {
     [accounts],
   );
 
+  /** Sólo se puede pagar una tarjeta con una cuenta de su misma moneda. */
+  const liquidAccountsFor = (currency: Currency): Account[] =>
+    liquidAccounts.filter((account) => (account.currency ?? 'ARS') === currency);
+
   const closePaymentForm = () => {
     setPayingCardId(null);
     setPaymentOriginId('');
@@ -545,9 +624,10 @@ export function FinanceSection() {
 
     // Prioriza la cuenta con saldo suficiente: si ninguna llega, la primera
     // igual sirve para un pago parcial.
+    const candidates = liquidAccountsFor(card.currency ?? 'ARS');
     const preferred =
-      liquidAccounts.find((account) => account.balance >= statement.statementToPay) ??
-      liquidAccounts[0];
+      candidates.find((account) => account.balance >= statement.statementToPay) ??
+      candidates[0];
 
     setPayingCardId(card.id);
     setPaymentOriginId(preferred?.id ?? '');
@@ -571,7 +651,12 @@ export function FinanceSection() {
 
     const statement = analyzeCreditCardStatement(card, transactions);
     if (amount > statement.statementToPay) {
-      setPaymentError(`El resumen a pagar es ${money(statement.statementToPay)}.`);
+      setPaymentError(
+        `El resumen a pagar es ${moneyWithCurrency(
+          statement.statementToPay,
+          card.currency ?? 'ARS',
+        )}.`,
+      );
       return;
     }
 
@@ -837,16 +922,20 @@ export function FinanceSection() {
 
     const label = formatInstallmentProgress(status);
 
-    addTransaction({
-      accountId: installmentOriginId,
-      destinationAccountId: null,
-      type: 'gasto',
-      amount: status.monthlyAmount,
-      date: Date.now(),
-      category: item.category,
-      notes: `${label || 'Cuota mensual'}: ${item.name}`,
-      linkedItemId: item.id,
-    });
+    addTransaction(
+      {
+        accountId: installmentOriginId,
+        destinationAccountId: null,
+        type: 'gasto',
+        amount: status.monthlyAmount,
+        date: Date.now(),
+        category: item.category,
+        notes: `${label || 'Cuota mensual'}: ${item.name}`,
+        linkedItemId: item.id,
+      },
+      // La cuota está expresada en la moneda del artículo.
+      { currency: item.currency ?? 'ARS' },
+    );
   };
 
   return (
@@ -867,19 +956,45 @@ export function FinanceSection() {
                   totalBalance < 0 ? 'text-danger' : 'text-ink'
                 }`}
               >
-                {money(totalBalance)}
+                {moneyWithCurrency(totalBalance, 'ARS')}
               </span>
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={isAccountFormOpen ? closeAccountForm : openCreateAccount}
-            className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-ink px-4 text-xs font-bold text-surface transition-opacity hover:opacity-90"
-          >
-            <Icon name={isAccountFormOpen ? 'cancel' : 'add'} size={14} />
-            {isAccountFormOpen ? 'Cerrar' : 'Nueva cuenta'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <select
+                id="account-sort"
+                aria-label="Ordenar cuentas"
+                value={accountSort}
+                onChange={(event) =>
+                  setPrefs({ accountSort: event.target.value as AccountSortMode })
+                }
+                disabled={accounts.length < 2}
+                className="min-h-[40px] cursor-pointer appearance-none rounded-xl border border-line bg-surface-2 pl-3 pr-9 text-xs font-semibold text-ink transition-colors hover:border-line-strong focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {ACCOUNT_SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <Icon
+                name="chevron"
+                size={14}
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={isAccountFormOpen ? closeAccountForm : openCreateAccount}
+              className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl bg-ink px-4 text-xs font-bold text-surface transition-opacity hover:opacity-90"
+            >
+              <Icon name={isAccountFormOpen ? 'cancel' : 'add'} size={14} />
+              {isAccountFormOpen ? 'Cerrar' : 'Nueva cuenta'}
+            </button>
+          </div>
         </div>
 
         {/* FORMULARIO INLINE (crear / editar) */}
@@ -965,31 +1080,66 @@ export function FinanceSection() {
                 )}
               </div>
 
-              <fieldset className="grid gap-1.5">
-                <legend className={LABEL_CLASS}>Color</legend>
-                <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                  {COLOR_OPTIONS.map((option) => {
-                    const selected = accountColor === option.id;
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => setAccountColor(option.id)}
-                        aria-pressed={selected}
-                        aria-label={`Color ${option.label}`}
-                        title={option.label}
-                        style={{ backgroundColor: option.swatch }}
-                        className={`h-9 w-9 rounded-full border-2 transition-transform ${
-                          selected
-                            ? 'scale-110 border-ink ring-2 ring-ink/20'
-                            : 'border-line-strong hover:scale-105'
-                        }`}
-                      />
-                    );
-                  })}
-                </div>
-              </fieldset>
+              <div className="grid gap-1.5">
+                <label htmlFor="account-currency" className={LABEL_CLASS}>
+                  Moneda
+                </label>
+                <SelectField
+                  id="account-currency"
+                  value={accountCurrency}
+                  onChange={(value) => {
+                    setAccountCurrency(value as Currency);
+                    setAccountError('');
+                  }}
+                  disabled={editingAccountHasMovements}
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </SelectField>
+                <p className="text-[0.7rem] text-muted">
+                  {editingAccountHasMovements
+                    ? 'No se puede cambiar la moneda: la cuenta ya tiene movimientos.'
+                    : accountCurrency === 'USD'
+                      ? `El saldo se consolidará a ${moneyWithCurrency(
+                          toArs(
+                            parsePrice(accountBalance) || 0,
+                            'USD',
+                            prefs.usdRate,
+                          ),
+                          'ARS',
+                        )}.`
+                      : 'Saldo y movimientos en pesos.'}
+                </p>
+              </div>
             </div>
+
+            <fieldset className="grid gap-1.5">
+              <legend className={LABEL_CLASS}>Color</legend>
+              <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                {COLOR_OPTIONS.map((option) => {
+                  const selected = accountColor === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setAccountColor(option.id)}
+                      aria-pressed={selected}
+                      aria-label={`Color ${option.label}`}
+                      title={option.label}
+                      style={{ backgroundColor: option.swatch }}
+                      className={`h-9 w-9 rounded-full border-2 transition-transform ${
+                        selected
+                          ? 'scale-110 border-ink ring-2 ring-ink/20'
+                          : 'border-line-strong hover:scale-105'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+            </fieldset>
 
             {accountType === 'tarjeta' && (
               <div className="grid gap-4 rounded-2xl border border-line bg-surface p-3 sm:grid-cols-2">
@@ -1074,7 +1224,7 @@ export function FinanceSection() {
           </p>
         ) : (
           <ul className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {accounts.map((account) => {
+            {sortedAccounts.map((account) => {
               const accent = accentColor(account.color);
               const confirming = confirmDeleteId === account.id;
               const statement =
@@ -1142,8 +1292,13 @@ export function FinanceSection() {
                       account.balance < 0 ? 'text-danger' : 'text-ink'
                     }`}
                   >
-                    {money(account.balance)}
+                    {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
                   </p>
+                  {(account.currency ?? 'ARS') === 'USD' && (
+                    <p className="relative mt-0.5 pl-2 text-[0.7rem] font-semibold tabular-nums text-muted">
+                      ≈ {moneyWithCurrency(toArs(account.balance, 'USD', prefs.usdRate), 'ARS')}
+                    </p>
+                  )}
 
                   {statement && (
                     <div className="relative mt-3 grid gap-2 pl-2">
@@ -1173,7 +1328,10 @@ export function FinanceSection() {
                           Consumos del ciclo
                         </span>
                         <span className="text-xs font-bold tabular-nums text-ink">
-                          {money(statement.currentCycleSpend)}
+                          {moneyWithCurrency(
+                            statement.currentCycleSpend,
+                            account.currency ?? 'ARS',
+                          )}
                         </span>
                       </div>
 
@@ -1184,7 +1342,10 @@ export function FinanceSection() {
                               Resumen a pagar
                             </span>
                             <span className="text-xs font-bold tabular-nums text-danger">
-                              {money(statement.statementToPay)}
+                              {moneyWithCurrency(
+                                statement.statementToPay,
+                                account.currency ?? 'ARS',
+                              )}
                             </span>
                           </div>
 
@@ -1218,12 +1379,16 @@ export function FinanceSection() {
                                     setPaymentError('');
                                   }}
                                 >
-                                  {liquidAccounts.length === 0 && (
+                                  {liquidAccountsFor(account.currency ?? 'ARS').length === 0 && (
                                     <option value="">Sin cuentas disponibles</option>
                                   )}
-                                  {liquidAccounts.map((origin) => (
+                                  {liquidAccountsFor(account.currency ?? 'ARS').map((origin) => (
                                     <option key={origin.id} value={origin.id}>
-                                      {origin.name} · {money(origin.balance)}
+                                      {origin.name} ·{' '}
+                                      {moneyWithCurrency(
+                                        origin.balance,
+                                        origin.currency ?? 'ARS',
+                                      )}
                                     </option>
                                   ))}
                                 </SelectField>
@@ -1621,7 +1786,8 @@ export function FinanceSection() {
                           <option value="">Sin cuenta (sólo la meta)</option>
                           {accounts.map((account) => (
                             <option key={account.id} value={account.id}>
-                              {account.name} · {money(account.balance)}
+                              {account.name} ·{' '}
+                    {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
                             </option>
                           ))}
                         </SelectField>
@@ -1699,7 +1865,8 @@ export function FinanceSection() {
                 {!hasAccounts && <option value="">Sin cuentas</option>}
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.name} · {money(account.balance)}
+                    {account.name} ·{' '}
+                    {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
                   </option>
                 ))}
               </SelectField>
@@ -1728,7 +1895,7 @@ export function FinanceSection() {
                       {formatInstallmentProgress(status) || 'Cuota mensual'}
                     </span>
                     <span className="text-sm font-bold tabular-nums text-ink">
-                      {money(status.monthlyAmount)}
+                      {moneyWithCurrency(status.monthlyAmount, item.currency ?? 'ARS')}
                     </span>
                   </div>
 
@@ -1859,6 +2026,13 @@ export function FinanceSection() {
                 required
                 className={INPUT_CLASS}
               />
+              <p className="text-[0.7rem] text-muted">
+                El monto se registra en{' '}
+                {originCurrency === 'USD'
+                  ? 'US$ (cuenta en dólares)'
+                  : '$ (cuenta en pesos)'}
+                .
+              </p>
             </div>
 
             <div className="grid gap-1.5">
@@ -1896,7 +2070,8 @@ export function FinanceSection() {
                 {!hasAccounts && <option value="">Sin cuentas</option>}
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.name} · {money(account.balance)}
+                    {account.name} ·{' '}
+                    {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
                   </option>
                 ))}
               </SelectField>
@@ -1917,17 +2092,16 @@ export function FinanceSection() {
                   disabled={!hasAccounts}
                 >
                   <option value="">Elegí una cuenta</option>
-                  {accounts
-                    .filter((account) => account.id !== originId)
-                    .map((account) => (
-                      <option key={account.id} value={account.id}>
-                        {account.name} · {money(account.balance)}
-                      </option>
-                    ))}
+                  {transferTargets.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} ·{' '}
+                      {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
+                    </option>
+                  ))}
                 </SelectField>
-                {hasAccounts && accounts.length < 2 && (
+                {hasAccounts && transferTargets.length === 0 && (
                   <p className="text-[0.7rem] text-muted">
-                    Necesitás al menos dos cuentas para transferir.
+                    Necesitás otra cuenta en {originCurrency} para transferir.
                   </p>
                 )}
               </div>
@@ -1992,7 +2166,7 @@ export function FinanceSection() {
                 <option value="">Sin vínculo</option>
                 {sortedItems.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} · {money(item.price)}
+                    {item.name} · {moneyWithCurrency(item.price, item.currency ?? 'ARS')}
                   </option>
                 ))}
               </SelectField>
@@ -2158,7 +2332,10 @@ export function FinanceSection() {
                           <p className="text-sm font-semibold text-ink">
                             {title}
                             <span className="ml-2 font-bold tabular-nums">
-                              {signedAmount(transaction)}
+                              {signedAmount(
+                                transaction,
+                                accountCurrencyOf.get(transaction.accountId) ?? 'ARS',
+                              )}
                             </span>
                           </p>
                           <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wider text-muted">
@@ -2284,7 +2461,10 @@ export function FinanceSection() {
                         </div>
 
                         <span className={`shrink-0 text-sm font-bold tabular-nums ${meta.tone}`}>
-                          {signedAmount(transaction)}
+                          {signedAmount(
+                            transaction,
+                            accountCurrencyOf.get(transaction.accountId) ?? 'ARS',
+                          )}
                         </span>
 
                         <button

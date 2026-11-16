@@ -4,6 +4,8 @@ import {
   PRIORITY,
   ACCOUNT_TYPES,
   TRANSACTION_TYPES,
+  CURRENCIES,
+  DEFAULT_USD_RATE,
   MAX_PHOTO_SIDE,
   MAX_PHOTO_DATA_LENGTH,
   PHOTO_QUALITIES,
@@ -12,6 +14,7 @@ import {
   SORT_MODES,
   STATUS_FILTERS,
   VIEW_MODES,
+  ACCOUNT_SORT_MODES,
   HOME_LAYOUTS,
   HOME_MODULES,
   HOME_ICONS,
@@ -20,9 +23,9 @@ import {
 } from './config';
 import type {
   Account, AccountType, CardAccentColor, CardSurfaceStyle, CashflowForecastResult,
-  CashflowMonth, CreditCardStatement, Dimensions, HomeCardConfig, HomeModuleId, Installments,
-  Item, ItemOption, Prefs, RecurringExpense, RecurringExpenseState, RecurringExpenseStatus,
-  RecurringFrequency, SavingsGoal, Transaction, TransactionType,
+  CashflowMonth, CreditCardStatement, Currency, Dimensions, HomeCardConfig, HomeModuleId,
+  Installments, Item, ItemOption, Prefs, RecurringExpense, RecurringExpenseState,
+  RecurringExpenseStatus, RecurringFrequency, SavingsGoal, Transaction, TransactionType,
 } from './types';
 
 // ==========================================
@@ -33,6 +36,78 @@ export const dimensionFormatter = new Intl.NumberFormat('es-AR', { maximumFracti
 
 export const money = (v: number) => `$ ${priceFormatter.format(v)}`;
 export const pluralize = (n: number, s: string, p: string) => `${n} ${n === 1 ? s : p}`;
+
+/** Los dólares se muestran siempre con dos decimales: US$ 13,50. */
+const usdFormatter = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** Formatea según la moneda: `$ 1.200` para ARS, `US$ 13,50` para USD. */
+export function moneyWithCurrency(amount: number, currency: Currency = 'ARS'): string {
+  const value = Number.isFinite(amount) ? amount : 0;
+  return currency === 'USD' ? `US$ ${usdFormatter.format(value)}` : money(value);
+}
+
+// ==========================================
+// MULTI-MONEDA
+// ==========================================
+/** Cotización saneada: nunca deja dividir por 0 ni por NaN. */
+const safeUsdRate = (usdRate: number): number =>
+  Number.isFinite(usdRate) && usdRate > 0 ? usdRate : DEFAULT_USD_RATE;
+
+const clampTaxPercent = (value: number): number =>
+  Number.isFinite(value) ? Math.min(Math.max(value, 0), 200) : 0;
+
+/**
+ * Convierte a pesos. En USD aplica la cotización y, si viene, el porcentaje
+ * de impuestos/percepciones (suscripciones digitales: 21, 30, 60…).
+ */
+export function toArs(
+  amount: number,
+  currency: Currency = 'ARS',
+  usdRate: number = 1,
+  taxPercent: number = 0,
+): number {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return 0;
+  if (currency !== 'USD') return roundMoney(value);
+
+  const rate = safeUsdRate(usdRate);
+  return roundMoney(value * rate * (1 + clampTaxPercent(taxPercent) / 100));
+}
+
+/**
+ * Convierte entre dos monedas usando la cotización de referencia. Convierte
+ * siempre vía ARS para que ida y vuelta no acumulen diferencias de redondeo.
+ */
+export function convertCurrency(
+  amount: number,
+  from: Currency = 'ARS',
+  to: Currency = 'ARS',
+  usdRate: number = DEFAULT_USD_RATE,
+  taxPercent: number = 0,
+): number {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return 0;
+  if (from === to) return roundMoney(value);
+
+  const inArs = toArs(value, from, usdRate, taxPercent);
+  return to === 'ARS' ? inArs : roundMoney(inArs / safeUsdRate(usdRate));
+}
+
+/** Valida la moneda de un registro crudo. Cualquier cosa rara cae en ARS. */
+export function normalizeCurrency(value: unknown): Currency {
+  return typeof value === 'string' && CURRENCIES.has(value.toUpperCase() as Currency)
+    ? (value.toUpperCase() as Currency)
+    : 'ARS';
+}
+
+/** Cotización configurable: sólo positivos finitos; el resto usa el default. */
+export function normalizeUsdRate(value: unknown): number {
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate > 0 ? roundMoney(rate) : DEFAULT_USD_RATE;
+}
 
 /** Redondeo a centavos. Evita arrastrar errores de coma flotante en saldos. */
 export const roundMoney = (n: number) => Math.round(n * 100) / 100;
@@ -302,6 +377,7 @@ export function normalizeItem(raw: unknown): Item | null {
     category: normalizeLabel(r.category, CATEGORY_MAX_LENGTH) || 'Otros',
     subcategory: normalizeLabel(r.subcategory, SUBCATEGORY_MAX_LENGTH),
     price: Math.round(price * 100) / 100,
+    currency: normalizeCurrency(r.currency),
     priority: PRIORITY.has(r.priority as any) ? (r.priority as Item['priority']) : 'media',
     bought: wishlist ? false : r.bought === true,
     wishlist,
@@ -365,6 +441,7 @@ export function normalizeAccount(raw: unknown): Account | null {
     name,
     type,
     balance: Number.isFinite(balance) ? roundMoney(balance) : 0,
+    currency: normalizeCurrency(r.currency),
     color: normalizeLabel(r.color, 20) || 'accent',
     closingDay: isCard ? normalizeBillingDay(r.closingDay) : null,
     dueDay: isCard ? normalizeBillingDay(r.dueDay) : null,
@@ -478,11 +555,17 @@ export function normalizeRecurringExpense(raw: unknown): RecurringExpense | null
     ? (r.frequency as RecurringFrequency)
     : 'mensual';
 
+  const currency = normalizeCurrency(r.currency);
+
   return {
     id: typeof r.id === 'string' && r.id ? r.id : createId(),
     name,
     category: normalizeLabel(r.category, 40) || 'Servicios',
     amount,
+    currency,
+    // Los impuestos sólo aplican a montos en dólares: en pesos se limpia para
+    // que un cambio de moneda no deje un porcentaje fantasma.
+    taxPercent: currency === 'USD' ? clampTaxPercent(Number(r.taxPercent)) : 0,
     // 10 es un default razonable: la mayoría de los servicios vencen a mitad de mes.
     dueDay: normalizeBillingDay(r.dueDay) ?? 10,
     frequency,
@@ -585,6 +668,8 @@ export function normalizePrefs(raw: unknown): Prefs {
     wishlistSort: pickEnum(prefs.wishlistSort, SORT_MODES, DEFAULT_PREFS.wishlistSort),
     status: pickEnum(prefs.status, STATUS_FILTERS, DEFAULT_PREFS.status),
     viewMode: pickEnum(prefs.viewMode, VIEW_MODES, DEFAULT_PREFS.viewMode),
+    accountSort: pickEnum(prefs.accountSort, ACCOUNT_SORT_MODES, DEFAULT_PREFS.accountSort ?? 'manual'),
+    usdRate: normalizeUsdRate(prefs.usdRate),
     homeLayout: pickEnum(prefs.homeLayout, HOME_LAYOUTS, DEFAULT_PREFS.homeLayout),
     homeCards: normalizeHomeCards(prefs.homeCards),
   };
@@ -689,6 +774,7 @@ export interface PurchasesSummary {
 export function summarizePurchases(
   items: Item[],
   currentMonthYYYYMM: string,
+  usdRate: number = DEFAULT_USD_RATE,
 ): PurchasesSummary {
   let pendingTotal = 0;
   let pendingCount = 0;
@@ -700,17 +786,20 @@ export function summarizePurchases(
   for (const item of items) {
     if (item.wishlist) continue;
 
+    const currency = item.currency ?? 'ARS';
+    const priceInArs = toArs(item.price, currency, usdRate);
+
     if (item.bought) {
-      boughtTotal += item.price;
+      boughtTotal += priceInArs;
       boughtCount += 1;
 
       const status = getInstallmentStatus(item.installments, currentMonthYYYYMM);
       if (status?.active && status.monthlyAmount > 0) {
-        monthlyAmount += status.monthlyAmount;
+        monthlyAmount += toArs(status.monthlyAmount, currency, usdRate);
         activeInstallments += 1;
       }
     } else {
-      pendingTotal += item.price;
+      pendingTotal += priceInArs;
       pendingCount += 1;
     }
   }
@@ -829,12 +918,16 @@ const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('es-AR', { month: 'short' 
 export function estimateBaselineMonthlyIncome(
   transactions: Transaction[],
   now: Date = new Date(),
+  accounts: Account[] = [],
+  usdRate: number = DEFAULT_USD_RATE,
 ): number {
+  const currencyOf = new Map(accounts.map((a) => [a.id, a.currency ?? 'ARS'] as const));
   const totals = new Map<string, number>();
   for (const t of transactions) {
     if (t.type !== 'ingreso') continue;
     const key = currentMonthKey(new Date(t.date));
-    totals.set(key, (totals.get(key) ?? 0) + t.amount);
+    const amountInArs = toArs(t.amount, currencyOf.get(t.accountId) ?? 'ARS', usdRate);
+    totals.set(key, (totals.get(key) ?? 0) + amountInArs);
   }
 
   const withIncome: number[] = [];
@@ -862,12 +955,19 @@ export function buildCashflowForecast(
   monthlyIncomeOverride?: number | null,
   recurringExpenses: RecurringExpense[] = [],
   now: Date = new Date(),
+  usdRate: number = DEFAULT_USD_RATE,
 ): CashflowForecastResult {
+  const currencyOf = new Map(accounts.map((a) => [a.id, a.currency ?? 'ARS'] as const));
+
+  // Todo el flujo se proyecta en pesos: las cuentas y servicios en USD se
+  // consolidan con la cotización de referencia.
   const startingLiquidity = roundMoney(
-    accounts.filter((a) => a.type !== 'tarjeta').reduce((sum, a) => sum + a.balance, 0),
+    accounts
+      .filter((a) => a.type !== 'tarjeta')
+      .reduce((sum, a) => sum + toArs(a.balance, a.currency ?? 'ARS', usdRate), 0),
   );
 
-  const defaultMonthlyIncome = estimateBaselineMonthlyIncome(transactions, now);
+  const defaultMonthlyIncome = estimateBaselineMonthlyIncome(transactions, now, accounts, usdRate);
 
   // Un override negativo o inválido se descarta: el promedio automático manda.
   const override =
@@ -883,7 +983,10 @@ export function buildCashflowForecast(
   const incomeThisMonth = roundMoney(
     transactions
       .filter((t) => t.type === 'ingreso' && currentMonthKey(new Date(t.date)) === currentKey)
-      .reduce((sum, t) => sum + t.amount, 0),
+      .reduce(
+        (sum, t) => sum + toArs(t.amount, currencyOf.get(t.accountId) ?? 'ARS', usdRate),
+        0,
+      ),
   );
 
   const months: CashflowMonth[] = [];
@@ -910,7 +1013,9 @@ export function buildCashflowForecast(
       if (item.bought) {
         // Compras ya hechas: las cuotas mandan según el mes de la proyección.
         const status = getInstallmentStatus(item.installments, key);
-        if (status?.active && status.monthlyAmount > 0) installmentsTotal += status.monthlyAmount;
+        if (status?.active && status.monthlyAmount > 0) {
+          installmentsTotal += toArs(status.monthlyAmount, item.currency ?? 'ARS', usdRate);
+        }
         continue;
       }
 
@@ -930,10 +1035,10 @@ export function buildCashflowForecast(
 
       if (offset === 0) {
         // Desembolso de este mes: cuota 1 si hay plan, si no el precio.
-        plannedTotal += hasPlan ? plan.amount : item.price;
+        plannedTotal += toArs(hasPlan ? plan.amount : item.price, item.currency ?? 'ARS', usdRate);
       } else if (hasPlan && offset < plan.count) {
         // Cuotas 2..N: ya no son "compra planificada", son cuota viva.
-        installmentsTotal += plan.amount;
+        installmentsTotal += toArs(plan.amount, item.currency ?? 'ARS', usdRate);
       }
     }
 
@@ -947,7 +1052,12 @@ export function buildCashflowForecast(
       if (!expense.active) continue;
       if (!recurringAppliesToMonth(expense, key)) continue;
       if (i === 0 && expense.lastPaidMonth === currentKey) continue;
-      recurringTotal += expense.amount;
+      recurringTotal += toArs(
+        expense.amount,
+        expense.currency ?? 'ARS',
+        usdRate,
+        expense.taxPercent ?? 0,
+      );
     }
 
     const recurring = roundMoney(recurringTotal);

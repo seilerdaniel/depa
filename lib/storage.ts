@@ -221,15 +221,16 @@ async function writeItemsDirect(items: Item[]) {
 
   const query = `
     INSERT INTO items (
-      id, name, category, subcategory, price, priority, bought, wishlist, createdAt, 
+      id, name, category, subcategory, price, currency, priority, bought, wishlist, createdAt, 
       purchaseUrl, imageUrl, imageData, storeName, storeLocation, dimensions, 
       installments, purchaseMonth, notes, brand, model, color, warranty, orderNumber, options
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
     )
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, category=excluded.category, subcategory=excluded.subcategory, 
-      price=excluded.price, priority=excluded.priority, bought=excluded.bought, 
+      price=excluded.price, currency=excluded.currency, priority=excluded.priority,
+      bought=excluded.bought, 
       wishlist=excluded.wishlist, purchaseUrl=excluded.purchaseUrl, imageUrl=excluded.imageUrl, 
       imageData=excluded.imageData, storeName=excluded.storeName, storeLocation=excluded.storeLocation, 
       dimensions=excluded.dimensions, installments=excluded.installments, purchaseMonth=excluded.purchaseMonth, 
@@ -249,6 +250,7 @@ async function writeItemsDirect(items: Item[]) {
       i.category,
       i.subcategory,
       i.price,
+      i.currency ?? 'ARS',
       i.priority,
       i.bought ? 1 : 0,
       i.wishlist ? 1 : 0,
@@ -338,10 +340,11 @@ async function writeAccountsDirect(accounts: Account[]) {
   await deleteRemovedRows(db, 'accounts', 'id', accounts.map((a) => a.id));
 
   const query = `
-    INSERT INTO accounts (id, name, type, balance, color, closingDay, dueDay, createdAt) 
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO accounts (id, name, type, balance, currency, color, closingDay, dueDay, createdAt) 
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT(id) DO UPDATE SET
-      name=excluded.name, type=excluded.type, balance=excluded.balance, color=excluded.color,
+      name=excluded.name, type=excluded.type, balance=excluded.balance,
+      currency=excluded.currency, color=excluded.color,
       closingDay=excluded.closingDay, dueDay=excluded.dueDay
   `;
 
@@ -354,6 +357,7 @@ async function writeAccountsDirect(accounts: Account[]) {
       a.name,
       a.type,
       a.balance,
+      a.currency ?? 'ARS',
       a.color,
       isCard ? normalizeBillingDay(a.closingDay) : null,
       isCard ? normalizeBillingDay(a.dueDay) : null,
@@ -506,10 +510,11 @@ async function writeRecurringExpensesDirect(expenses: RecurringExpense[]) {
   await deleteRemovedRows(db, 'recurring_expenses', 'id', expenses.map((e) => e.id));
 
   const query = `
-    INSERT INTO recurring_expenses (id, name, category, amount, dueDay, frequency, accountId, active, lastPaidMonth, notes, createdAt)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    INSERT INTO recurring_expenses (id, name, category, amount, currency, taxPercent, dueDay, frequency, accountId, active, lastPaidMonth, notes, createdAt)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, category=excluded.category, amount=excluded.amount,
+      currency=excluded.currency, taxPercent=excluded.taxPercent,
       dueDay=excluded.dueDay, frequency=excluded.frequency, accountId=excluded.accountId,
       active=excluded.active, lastPaidMonth=excluded.lastPaidMonth, notes=excluded.notes
   `;
@@ -520,6 +525,8 @@ async function writeRecurringExpensesDirect(expenses: RecurringExpense[]) {
       e.name,
       e.category,
       e.amount,
+      e.currency ?? 'ARS',
+      e.currency === 'USD' ? e.taxPercent ?? 0 : 0,
       e.dueDay,
       e.frequency,
       e.accountId ?? null,

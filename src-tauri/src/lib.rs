@@ -115,6 +115,17 @@ fn migrations() -> Vec<Migration> {
     ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "add_multicurrency_support",
+            sql: "
+      ALTER TABLE accounts ADD COLUMN currency TEXT NOT NULL DEFAULT 'ARS';
+      ALTER TABLE items ADD COLUMN currency TEXT NOT NULL DEFAULT 'ARS';
+      ALTER TABLE recurring_expenses ADD COLUMN currency TEXT NOT NULL DEFAULT 'ARS';
+      ALTER TABLE recurring_expenses ADD COLUMN taxPercent REAL NOT NULL DEFAULT 0;
+    ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

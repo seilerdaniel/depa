@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useData, useFinance } from '@/state/AppProvider';
+import { useData, useFinance, usePrefs } from '@/state/AppProvider';
 import { buildCashflowForecast, money, parsePrice } from '@/lib/utils';
 import { Icon } from './Icon';
 
@@ -30,6 +30,7 @@ function readableMax(value: number): number {
 export function CashflowForecast() {
   const { items } = useData();
   const { accounts, transactions, recurringExpenses } = useFinance();
+  const { prefs } = usePrefs();
 
   const [incomeDraft, setIncomeDraft] = useState<string | null>(null);
 
@@ -37,8 +38,16 @@ export function CashflowForecast() {
     const parsed = incomeDraft === null ? null : parsePrice(incomeDraft);
     const override = parsed !== null && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 
-    return buildCashflowForecast(items, transactions, accounts, override, recurringExpenses);
-  }, [items, transactions, accounts, incomeDraft, recurringExpenses]);
+    return buildCashflowForecast(
+      items,
+      transactions,
+      accounts,
+      override,
+      recurringExpenses,
+      new Date(),
+      prefs.usdRate,
+    );
+  }, [items, transactions, accounts, incomeDraft, recurringExpenses, prefs.usdRate]);
 
   const peak = useMemo(
     () =>

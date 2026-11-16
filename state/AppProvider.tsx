@@ -15,9 +15,10 @@ import {
   createId, normalizeLabel, normalizeItem, normalizeAccount, normalizeTransaction,
   normalizeSavingsGoal, pruneTransactions, roundMoney, sameText, normalizeMonth,
   currentMonthKey, normalizePrefs, normalizeBillingDay, normalizeRecurringExpense,
+  convertCurrency, normalizeUsdRate,
 } from '@/lib/utils';
 import type {
-  Account, Item, Prefs, RecurringExpense, SavingsGoal, Transaction, View,
+  Account, Currency, Item, Prefs, RecurringExpense, SavingsGoal, Transaction, View,
 } from '@/lib/types';
 import {
   isTauri, isLocalImageRef, persistImageToDisk, readDiskImageAsDataUrl,
@@ -205,10 +206,20 @@ const reducer = (s: AppState, a: Action): AppState => {
       const account = s.accounts.find((acc) => acc.id === a.accountId);
       if (!account) return s;
 
-      const amount =
+      const rawAmount =
         item.installments && item.installments.count > 0 && item.installments.amount > 0
           ? item.installments.amount
           : item.price;
+
+      // El artículo puede estar en USD y la cuenta en pesos (o al revés): el
+      // movimiento se registra en la moneda de la cuenta.
+      const amount = convertCurrency(
+        rawAmount,
+        item.currency ?? 'ARS',
+        account.currency ?? 'ARS',
+        s.prefs.usdRate,
+      );
+      if (amount <= 0) return s;
 
       const transaction: Transaction = {
         id: createId(),
@@ -530,6 +541,16 @@ export interface PrefsValue {
   setPrefs: (patch: Partial<Prefs>) => void;
 }
 
+/**
+ * Moneda en la que viene expresado el monto de un movimiento. Si se omite, se
+ * asume la moneda de la cuenta de origen (comportamiento histórico).
+ */
+export interface TransactionSource {
+  currency?: Currency;
+  /** Impuestos/percepciones a sumar cuando la moneda de origen es USD. */
+  taxPercent?: number;
+}
+
 export interface FinanceValue {
   accounts: Account[];
   transactions: Transaction[];
@@ -538,9 +559,12 @@ export interface FinanceValue {
   addAccount: (draft: Omit<Account, 'id' | 'createdAt'>) => boolean;
   updateAccount: (account: Account) => boolean;
   deleteAccount: (id: string) => void;
-  addTransaction: (draft: Omit<Transaction, 'id'>) => boolean;
+  addTransaction: (draft: Omit<Transaction, 'id'>, source?: TransactionSource) => boolean;
   /** Alta atómica de varios movimientos; devuelve cuántos se importaron. */
-  addTransactionsBatch: (drafts: Array<Omit<Transaction, 'id'>>) => number;
+  addTransactionsBatch: (
+    drafts: Array<Omit<Transaction, 'id'>>,
+    source?: TransactionSource,
+  ) => number;
   updateTransaction: (
     id: string,
     patch: { category: string; notes: string; date: number },
@@ -1159,16 +1183,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [announce, showToast]);
 
   const setPrefs = useCallback<PrefsValue['setPrefs']>((patch) => {
-    dispatch({ type: 'set-prefs', patch });
+    // La cotización nunca puede quedar en 0 o NaN: rompería todo consolidado.
+    dispatch({
+      type: 'set-prefs',
+      patch: patch.usdRate === undefined ? patch : { ...patch, usdRate: normalizeUsdRate(patch.usdRate) },
+    });
   }, []);
 
   const addCategory = useCallback<DataValue['addCategory']>((name) => {
-    if (stateRef.current.categories.some((c) => c.toLocaleLowerCase('es') === name.toLocaleLowerCase('es'))) {
-      return false;
-    }
-    dispatch({ type: 'add-category', name });
+    const trimmed = normalizeLabel(name, CATEGORY_MAX_LENGTH);
+    if (!trimmed) return false;
+    if (stateRef.current.categories.some((c) => sameText(c, trimmed))) return false;
+
+    dispatch({ type: 'add-category', name: trimmed });
+    showToast(`Categoría "${trimmed}" creada`);
     return true;
-  }, []);
+  }, [showToast]);
 
   const updateCategory = useCallback<DataValue['updateCategory']>((oldName, newName) => {
     const trimmed = normalizeLabel(newName, CATEGORY_MAX_LENGTH);
@@ -1226,6 +1256,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       name,
       type: draft.type,
       balance: Number.isFinite(draft.balance) ? roundMoney(draft.balance) : 0,
+      currency: draft.currency ?? 'ARS',
       color: normalizeLabel(draft.color, 20) || 'accent',
       closingDay: draft.type === 'tarjeta' ? normalizeBillingDay(draft.closingDay) : null,
       dueDay: draft.type === 'tarjeta' ? normalizeBillingDay(draft.dueDay) : null,
@@ -1249,12 +1280,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const balance = Number(account.balance);
 
+    // Cambiar la moneda reinterpretaría todo el historial de la cuenta: sólo
+    // se permite mientras no tenga movimientos.
+    const hasMovements = stateRef.current.transactions.some(
+      (t) => t.accountId === account.id || t.destinationAccountId === account.id,
+    );
+    const currency: Currency = hasMovements
+      ? current.currency ?? 'ARS'
+      : account.currency ?? current.currency ?? 'ARS';
+
     dispatch({
       type: 'update-account',
       account: {
         ...current,
         name,
         type: account.type,
+        currency,
         color: normalizeLabel(account.color, 20) || current.color,
         balance: Number.isFinite(balance) ? roundMoney(balance) : current.balance,
         // Al dejar de ser tarjeta los días dejan de existir: se limpian a null
@@ -1287,18 +1328,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }, [announce, showToast]);
 
-  const addTransaction = useCallback<FinanceValue['addTransaction']>((draft) => {
-    const amount = roundMoney(Number(draft.amount));
-    if (!Number.isFinite(amount) || amount <= 0) return false;
+  const addTransaction = useCallback<FinanceValue['addTransaction']>((draft, source) => {
+    const accounts = stateRef.current.accounts;
+    const account = accounts.find((a) => a.id === draft.accountId);
+    if (!account) return false;
 
-    const accountIds = new Set(stateRef.current.accounts.map((a) => a.id));
-    if (!accountIds.has(draft.accountId)) return false;
+    const accountCurrency = account.currency ?? 'ARS';
+
+    // El monto llega en la moneda declarada por el formulario (por defecto, la
+    // de la cuenta) y se guarda siempre en la moneda de la cuenta.
+    const amount = convertCurrency(
+      Number(draft.amount),
+      source?.currency ?? accountCurrency,
+      accountCurrency,
+      stateRef.current.prefs.usdRate,
+      source?.taxPercent ?? 0,
+    );
+    if (!Number.isFinite(amount) || amount <= 0) return false;
 
     let destinationAccountId: string | null = null;
     if (draft.type === 'transferencia') {
       if (!draft.destinationAccountId) return false;
       if (draft.destinationAccountId === draft.accountId) return false;
-      if (!accountIds.has(draft.destinationAccountId)) return false;
+
+      const destination = accounts.find((a) => a.id === draft.destinationAccountId);
+      if (!destination) return false;
+
+      // Una transferencia mueve un único monto: origen y destino deben compartir
+      // moneda. Cambiar de moneda es una operación de cambio, no una transferencia.
+      if ((destination.currency ?? 'ARS') !== accountCurrency) return false;
+
       destinationAccountId = draft.destinationAccountId;
     }
 
@@ -1320,21 +1379,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return true;
   }, [announce, showToast]);
 
-  const addTransactionsBatch = useCallback<FinanceValue['addTransactionsBatch']>((drafts) => {
-    const accountIds = new Set(stateRef.current.accounts.map((account) => account.id));
+  const addTransactionsBatch = useCallback<FinanceValue['addTransactionsBatch']>((drafts, source) => {
+    const accounts = stateRef.current.accounts;
+    const byId = new Map(accounts.map((account) => [account.id, account] as const));
     const valid: Transaction[] = [];
 
     for (const draft of drafts) {
-      const amount = roundMoney(Number(draft.amount));
+      const account = byId.get(draft.accountId);
+      if (!account) continue;
+
+      const accountCurrency = account.currency ?? 'ARS';
+      const amount = convertCurrency(
+        Number(draft.amount),
+        source?.currency ?? accountCurrency,
+        accountCurrency,
+        stateRef.current.prefs.usdRate,
+        source?.taxPercent ?? 0,
+      );
       if (!Number.isFinite(amount) || amount <= 0) continue;
-      if (!accountIds.has(draft.accountId)) continue;
 
       let destinationAccountId: string | null = null;
 
       if (draft.type === 'transferencia') {
         if (!draft.destinationAccountId) continue;
         if (draft.destinationAccountId === draft.accountId) continue;
-        if (!accountIds.has(draft.destinationAccountId)) continue;
+
+        const destination = byId.get(draft.destinationAccountId);
+        if (!destination) continue;
+        if ((destination.currency ?? 'ARS') !== accountCurrency) continue;
+
         destinationAccountId = draft.destinationAccountId;
       } else if (draft.type !== 'ingreso' && draft.type !== 'gasto') {
         continue;
@@ -1469,14 +1542,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       let transaction: Transaction | null = null;
       if (accountId) {
-        if (!current.accounts.some((a) => a.id === accountId)) return false;
+        const account = current.accounts.find((a) => a.id === accountId);
+        if (!account) return false;
+
+        // Las metas se llevan en pesos: si la cuenta es en USD, el aporte se
+        // registra convertido para que el saldo siga siendo coherente.
+        const accountAmount = convertCurrency(
+          effective,
+          'ARS',
+          account.currency ?? 'ARS',
+          current.prefs.usdRate,
+        );
+        if (accountAmount <= 0) return false;
 
         transaction = {
           id: createId(),
           accountId,
           destinationAccountId: null,
           type: isWithdrawal ? 'ingreso' : 'gasto',
-          amount: effective,
+          amount: accountAmount,
           date: Date.now(),
           category: 'Ahorro',
           notes: `${isWithdrawal ? 'Retiro de meta' : 'Aporte a meta'}: ${goal.name}`,
@@ -1563,17 +1647,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // La boleta real puede diferir del estimado (luz, gas, agua).
       const raw = Number(customAmount);
-      const amount = roundMoney(
+      const requested = roundMoney(
         Number.isFinite(raw) && raw > 0 ? raw : expense.amount,
       );
-      if (!Number.isFinite(amount) || amount <= 0) return false;
+      if (!Number.isFinite(requested) || requested <= 0) return false;
 
       // `undefined` = usar la cuenta sugerida; `null` = pagar sin cuenta.
       const targetAccount = accountId === undefined ? expense.accountId : accountId;
 
       let transaction: Transaction | null = null;
       if (targetAccount) {
-        if (!current.accounts.some((a) => a.id === targetAccount)) return false;
+        const account = current.accounts.find((a) => a.id === targetAccount);
+        if (!account) return false;
+
+        // El monto del servicio está en su moneda; el gasto se debita en la
+        // moneda de la cuenta. Un servicio USD pagado desde pesos suma la
+        // cotización y las percepciones configuradas.
+        const amount = convertCurrency(
+          requested,
+          expense.currency ?? 'ARS',
+          account.currency ?? 'ARS',
+          current.prefs.usdRate,
+          expense.taxPercent ?? 0,
+        );
+        if (!Number.isFinite(amount) || amount <= 0) return false;
 
         transaction = {
           id: createId(),

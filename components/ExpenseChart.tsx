@@ -1,26 +1,33 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useFinance } from '@/state/AppProvider';
-import { money } from '@/lib/utils';
+import { useFinance, usePrefs } from '@/state/AppProvider';
+import { money, toArs } from '@/lib/utils';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 export function ExpenseChart() {
-  const { transactions } = useFinance();
+  const { accounts, transactions } = useFinance();
+  const { prefs } = usePrefs();
 
   const data = useMemo(() => {
     const now = new Date();
+    const currencyOf = new Map(
+      accounts.map((account) => [account.id, account.currency ?? 'ARS'] as const),
+    );
+
     const currentMonthTx = transactions.filter(t => {
       const d = new Date(t.date);
       return t.type === 'gasto' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
 
-    // Agrupar por categoría
+    // Agrupar por categoría. Todo se consolida en pesos para que un gasto en
+    // dólares no se sume como si fuera un peso.
     const grouped = currentMonthTx.reduce((acc, t) => {
       const cat = t.category || 'Sin categoría';
-      acc[cat] = (acc[cat] || 0) + t.amount;
+      const inArs = toArs(t.amount, currencyOf.get(t.accountId) ?? 'ARS', prefs.usdRate);
+      acc[cat] = (acc[cat] || 0) + inArs;
       return acc;
     }, {} as Record<string, number>);
 
@@ -28,7 +35,7 @@ export function ExpenseChart() {
     return Object.entries(grouped)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value); // Mayor gasto primero
-  }, [transactions]);
+  }, [accounts, transactions, prefs.usdRate]);
 
   if (data.length === 0) {
     return (

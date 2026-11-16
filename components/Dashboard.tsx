@@ -37,7 +37,10 @@ export function Dashboard() {
   }, [budget]);
 
   // Misma función que usa PurchasesPanel: las dos pantallas no pueden divergir.
-  const totals = useMemo(() => summarizePurchases(items, currentMonthKey()), [items]);
+  const totals = useMemo(
+    () => summarizePurchases(items, currentMonthKey(), prefs.usdRate),
+    [items, prefs.usdRate],
+  );
 
   const planning = useMemo(() => {
     const groups = new Map<string, Item[]>();

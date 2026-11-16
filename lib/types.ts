@@ -5,6 +5,9 @@ export type View = 'home' | 'list' | 'wishlist' | 'moodboard' | 'dashboard' | 'f
 export type ViewMode = 'grid' | 'table' | 'list';
 export type StartView = 'home' | 'list' | 'finance';
 
+/** Moneda de una cuenta, artículo o servicio. */
+export type Currency = 'ARS' | 'USD';
+
 export interface Dimensions {
   height: number | null;
   width: number | null;
@@ -27,6 +30,8 @@ export interface Item {
   category: string;
   subcategory: string;
   price: number;
+  /** Moneda del precio. Ausente = 'ARS' (datos viejos). */
+  currency?: Currency;
   priority: Priority;
   bought: boolean;
   wishlist: boolean;
@@ -90,6 +95,10 @@ export interface Prefs {
   wishlistCategory: string;
   wishlistSubcategory: string;
   viewMode: ViewMode;
+  /** Orden de las tarjetas de cuentas en Mis Finanzas. */
+  accountSort?: AccountSortMode;
+  /** Cotización de referencia ARS por USD, configurable por el usuario. */
+  usdRate?: number;
   search: string;
   homeLayout: HomeLayout;
   homeCards: Record<HomeModuleId, HomeCardConfig>;
@@ -122,12 +131,17 @@ export interface HomeCardConfig {
 export type AccountType = 'banco' | 'billetera' | 'efectivo' | 'tarjeta';
 export type TransactionType = 'ingreso' | 'gasto' | 'transferencia';
 
+/** Criterio de orden de las tarjetas de cuentas. */
+export type AccountSortMode = 'manual' | 'balance-desc' | 'balance-asc' | 'type' | 'name';
+
 export interface Account {
   id: string;
   name: string;
   type: AccountType;
   /** Saldo actual. Se ajusta atómicamente al registrar/eliminar movimientos. */
   balance: number;
+  /** Moneda del saldo y de sus movimientos. Ausente = 'ARS'. */
+  currency?: Currency;
   /** Token de color o hex (ej. 'accent' | '#22c55e'). */
   color: string;
   /**
@@ -175,6 +189,13 @@ export interface RecurringExpense {
   category: string;
   /** Monto estimado. La boleta real puede diferir (luz, gas, agua). */
   amount: number;
+  /** Moneda del monto estimado. Ausente = 'ARS'. */
+  currency?: Currency;
+  /**
+   * Percepciones e impuestos que se suman al pagar (ej. 60 para suscripciones
+   * digitales en USD). Sólo se usa cuando `currency === 'USD'`.
+   */
+  taxPercent?: number;
   /** Día de vencimiento 1..31, recortado a fin de mes cuando hace falta. */
   dueDay: number;
   frequency: RecurringFrequency;

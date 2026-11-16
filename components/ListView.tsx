@@ -10,6 +10,7 @@ import { ItemCard } from './ItemCard';
 import { TableView } from './TableView';
 import { ListItem } from './ListItem';
 import { Icon } from './Icon';
+import { QuickCategoryAdd } from './QuickCategoryAdd';
 
 interface Props { mode: 'list' | 'wishlist' | 'history'; }
 
@@ -175,6 +176,7 @@ export function ListView({ mode }: Props) {
             <Icon name="chevron" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
           </div>
         </div>
+        <QuickCategoryAdd onCreated={(name) => setPrefs({ [categoryKey]: name } as any)} />
         {isActiveList && (
           <div className="flex flex-1 w-full md:w-auto min-w-[260px] gap-0.5 p-1 rounded-xl bg-surface-2 border border-line-strong/50" role="group">
             {(['todos', 'pendientes', 'comprados'] as const).map((s) => (

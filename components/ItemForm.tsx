@@ -9,9 +9,11 @@ import {
   SUBCATEGORY_MAX_LENGTH,
 } from '@/lib/config';
 import { persistImageToDisk, useResolvedImageSrc } from '@/lib/nativeImages';
-import { money, normalizeLabel, parsePrice } from '@/lib/utils';
-import type { Dimensions, Installments, Item, Priority } from '@/lib/types';
+import { moneyWithCurrency, normalizeLabel, parsePrice, sameText } from '@/lib/utils';
+import type { Currency, Dimensions, Installments, Item, Priority } from '@/lib/types';
+import { CURRENCY_OPTIONS } from '@/lib/config';
 import { Icon } from './Icon';
+import { QuickCategoryAdd } from './QuickCategoryAdd';
 
 const NAME_MAX_LENGTH = 100;
 const NOTES_MAX_LENGTH = 1000;
@@ -36,6 +38,7 @@ interface FormState {
   category: string;
   subcategory: string;
   price: string;
+  currency: Currency;
   priority: Priority;
   wishlist: boolean;
   purchaseMonth: string;
@@ -97,6 +100,7 @@ function buildInitialState(
       category: categories[0] ?? 'Otros',
       subcategory: '',
       price: '',
+      currency: 'ARS',
       priority: 'media',
       wishlist: defaultWishlist,
       purchaseMonth: '',
@@ -125,6 +129,7 @@ function buildInitialState(
     category: editingItem.category,
     subcategory: editingItem.subcategory ?? '',
     price: editingItem.price > 0 ? String(editingItem.price) : '',
+    currency: editingItem.currency ?? 'ARS',
     priority: editingItem.priority,
     wishlist: editingItem.wishlist,
     purchaseMonth: editingItem.purchaseMonth ?? '',
@@ -167,11 +172,24 @@ export function ItemForm() {
   const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Reconstruye el formulario al cambiar de artículo o de vista. `categories`
+  // queda fuera a propósito: crear una categoría nueva a mitad de la carga
+  // borraría todo lo que el usuario ya escribió.
   useEffect(() => {
     setForm(buildInitialState(editingItem, categories, view === 'wishlist'));
     setErrors({});
     setActiveTab('basic');
-  }, [editingItem, categories, view]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingItem, view]);
+
+  // Si la categoría elegida deja de existir, cae en la primera disponible.
+  useEffect(() => {
+    setForm((prev) =>
+      categories.some((category) => sameText(category, prev.category))
+        ? prev
+        : { ...prev, category: categories[0] ?? 'Otros' },
+    );
+  }, [categories]);
 
   const hasDetailsTab = fields.store || fields.specs || fields.warranty || fields.orderNumber;
   const hasExtraTab = fields.notes || fields.photo;
@@ -360,6 +378,7 @@ export function ItemForm() {
       category: form.category || 'Otros',
       subcategory,
       price: Math.round(parsedPrice * 100) / 100,
+      currency: form.currency,
       priority,
       wishlist: form.wishlist,
       purchaseMonth,
@@ -460,26 +479,35 @@ export function ItemForm() {
           </Field>
 
           <div className={`grid gap-3 ${fields.subcategory ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'}`}>
-            <Field label="Categoría">
-              <div className="relative">
-                <select
-                  value={form.category}
-                  onChange={(e) => update('category', e.target.value)}
-                  className={`${inputCls(false)} cursor-pointer appearance-none pr-9`}
-                >
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-                <Icon
-                  name="chevron"
-                  size={16}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+            <div className="grid gap-1.5">
+              <span className="text-xs font-bold text-ink-soft">Categoría</span>
+              <div className="flex items-stretch gap-2">
+                <div className="relative flex-1">
+                  <select
+                    value={form.category}
+                    onChange={(e) => update('category', e.target.value)}
+                    aria-label="Categoría"
+                    className={`${inputCls(false)} cursor-pointer appearance-none pr-9`}
+                  >
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon
+                    name="chevron"
+                    size={16}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+                  />
+                </div>
+
+                <QuickCategoryAdd
+                  variant="icon"
+                  onCreated={(name) => update('category', name)}
                 />
               </div>
-            </Field>
+            </div>
 
             {fields.subcategory && (
               <Field label="Subcategoría">
@@ -503,14 +531,28 @@ export function ItemForm() {
 
           <div className={`grid gap-3 ${fields.priority ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <Field label="Precio total" error={errors.price}>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0"
-                value={form.price}
-                onChange={(e) => handlePriceChange(e.target.value)}
-                className={`${inputCls(Boolean(errors.price))} font-bold tabular-nums`}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={form.price}
+                  onChange={(e) => handlePriceChange(e.target.value)}
+                  className={`${inputCls(Boolean(errors.price))} flex-1 font-bold tabular-nums`}
+                />
+                <select
+                  aria-label="Moneda del precio"
+                  value={form.currency}
+                  onChange={(e) => update('currency', e.target.value as Currency)}
+                  className={`${inputCls(false)} w-24 shrink-0 cursor-pointer tabular-nums`}
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </Field>
 
             {fields.priority && (
@@ -837,7 +879,9 @@ export function ItemForm() {
       {/* BOTÓN GUARDAR */}
       <div className="mt-5 flex items-center justify-between gap-3 border-t border-line pt-3.5">
         <span className="text-xs font-semibold text-muted tabular-nums">
-          {parsePrice(form.price) > 0 ? money(parsePrice(form.price)) : ''}
+          {parsePrice(form.price) > 0
+            ? moneyWithCurrency(parsePrice(form.price), form.currency)
+            : ''}
         </span>
         <button
           type="submit"

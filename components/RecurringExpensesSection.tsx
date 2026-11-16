@@ -1,18 +1,22 @@
 'use client';
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { useFinance } from '@/state/AppProvider';
+import { useFinance, usePrefs } from '@/state/AppProvider';
 import {
   analyzeRecurringExpenseStatus,
   money,
+  moneyWithCurrency,
   parsePrice,
+  toArs,
   RECURRING_CATEGORIES,
 } from '@/lib/utils';
 import type {
+  Currency,
   RecurringExpense,
   RecurringExpenseState,
   RecurringFrequency,
 } from '@/lib/types';
+import { CURRENCY_OPTIONS } from '@/lib/config';
 import { Icon } from './Icon';
 
 // ==========================================
@@ -76,6 +80,8 @@ export function RecurringExpensesSection() {
     deleteRecurringExpense,
     payRecurringExpense,
   } = useFinance();
+  const { prefs } = usePrefs();
+  const usdRate = prefs.usdRate;
 
   // ----- FORMULARIO -----
   const [isFormOpen, setFormOpen] = useState(false);
@@ -83,6 +89,8 @@ export function RecurringExpensesSection() {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('Servicios');
   const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState<Currency>('ARS');
+  const [taxPercent, setTaxPercent] = useState('');
   const [dueDay, setDueDay] = useState('10');
   const [frequency, setFrequency] = useState<RecurringFrequency>('mensual');
   const [accountId, setAccountId] = useState('');
@@ -128,19 +136,30 @@ export function RecurringExpensesSection() {
 
     for (const row of decorated) {
       if (!row.expense.active || !row.status.appliesThisMonth) continue;
-      fixed += row.expense.amount;
-      if (row.status.isPaidThisMonth) paid += row.expense.amount;
-      else pending += row.expense.amount;
+
+      // El consolidado del panel se expresa en pesos: un servicio en USD suma
+      // la cotización y las percepciones configuradas.
+      const inArs = toArs(
+        row.expense.amount,
+        row.expense.currency ?? 'ARS',
+        usdRate,
+        row.expense.taxPercent ?? 0,
+      );
+      fixed += inArs;
+      if (row.status.isPaidThisMonth) paid += inArs;
+      else pending += inArs;
     }
 
     return { fixed, pending, paid };
-  }, [decorated]);
+  }, [decorated, usdRate]);
 
   const resetForm = () => {
     setEditingId(null);
     setName('');
     setCategory('Servicios');
     setAmount('');
+    setCurrency('ARS');
+    setTaxPercent('');
     setDueDay('10');
     setFrequency('mensual');
     setAccountId('');
@@ -164,6 +183,10 @@ export function RecurringExpensesSection() {
     setName(expense.name);
     setCategory(expense.category);
     setAmount(expense.amount > 0 ? String(expense.amount) : '');
+    setCurrency(expense.currency ?? 'ARS');
+    setTaxPercent(
+      expense.currency === 'USD' && expense.taxPercent ? String(expense.taxPercent) : '',
+    );
     setDueDay(String(expense.dueDay));
     setFrequency(expense.frequency);
     setAccountId(expense.accountId ?? '');
@@ -194,10 +217,19 @@ export function RecurringExpensesSection() {
       return;
     }
 
+    const parsedTax = taxPercent.trim() === '' ? 0 : Number(taxPercent.replace(',', '.'));
+    if (!Number.isFinite(parsedTax) || parsedTax < 0 || parsedTax > 200) {
+      setFormError('El porcentaje de impuestos va del 0 al 200.');
+      return;
+    }
+
     const draft = {
       name: cleanName,
       category: category.trim() || 'Servicios',
       amount: parsedAmount,
+      currency,
+      // Los impuestos sólo tienen sentido en dólares: en pesos se guarda 0.
+      taxPercent: currency === 'USD' ? parsedTax : 0,
       dueDay: parsedDay,
       frequency,
       accountId: accountId || null,
@@ -390,15 +422,67 @@ export function RecurringExpensesSection() {
               <label htmlFor="recurring-amount" className={LABEL_CLASS}>
                 Monto estimado
               </label>
-              <input
-                id="recurring-amount"
-                type="text"
-                inputMode="decimal"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                placeholder="0"
-                className={INPUT_CLASS}
-              />
+              <div className="flex gap-2">
+                <input
+                  id="recurring-amount"
+                  type="text"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="0"
+                  className={`${INPUT_CLASS} flex-1`}
+                />
+                <select
+                  aria-label="Moneda del servicio"
+                  value={currency}
+                  onChange={(event) => {
+                    const next = event.target.value as Currency;
+                    setCurrency(next);
+                    if (next !== 'USD') setTaxPercent('');
+                  }}
+                  className="min-h-[44px] w-28 shrink-0 cursor-pointer rounded-xl border border-line-strong bg-surface px-2 text-sm text-ink focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/20"
+                >
+                  {CURRENCY_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {currency === 'USD' && (
+                <div className="mt-1 grid gap-1 rounded-xl border border-line bg-surface p-2.5">
+                  <label htmlFor="recurring-tax" className="text-[0.65rem] font-bold uppercase tracking-wider text-muted">
+                    % Impuestos y percepciones
+                  </label>
+                  <input
+                    id="recurring-tax"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={200}
+                    step={0.1}
+                    value={taxPercent}
+                    onChange={(event) => setTaxPercent(event.target.value)}
+                    placeholder="Ej. 21, 30, 60"
+                    className="w-full min-h-[38px] rounded-lg border border-line-strong bg-surface px-2.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/20"
+                  />
+                  <p className="text-[0.65rem] text-muted">
+                    Estimado final:{' '}
+                    <span className="font-bold tabular-nums text-ink">
+                      {moneyWithCurrency(
+                        toArs(
+                          parsePrice(amount) || 0,
+                          'USD',
+                          usdRate,
+                          Number(taxPercent.replace(',', '.')) || 0,
+                        ),
+                        'ARS',
+                      )}
+                    </span>
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -449,7 +533,8 @@ export function RecurringExpensesSection() {
                 <option value="">Sin cuenta (sólo recordatorio)</option>
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.name} · {money(account.balance)}
+                    {account.name} ·{' '}
+                    {moneyWithCurrency(account.balance, account.currency ?? 'ARS')}
                   </option>
                 ))}
               </select>
@@ -537,8 +622,25 @@ export function RecurringExpensesSection() {
 
                 <div>
                   <p className="text-base font-bold tabular-nums text-ink">
-                    {money(expense.amount)}
+                    {moneyWithCurrency(expense.amount, expense.currency ?? 'ARS')}
                   </p>
+                  {(expense.currency ?? 'ARS') === 'USD' && (
+                    <p className="text-[0.68rem] font-semibold tabular-nums text-muted">
+                      ≈{' '}
+                      {moneyWithCurrency(
+                        toArs(
+                          expense.amount,
+                          'USD',
+                          usdRate,
+                          expense.taxPercent ?? 0,
+                        ),
+                        'ARS',
+                      )}
+                      {(expense.taxPercent ?? 0) > 0 && (
+                        <span className="font-normal"> (con {expense.taxPercent}% imp.)</span>
+                      )}
+                    </p>
+                  )}
                   <p className="text-[0.62rem] text-muted">
                     {FREQUENCY_LABEL[expense.frequency]}
                     {account ? ` · ${account.name}` : ' · sin cuenta'}
@@ -568,6 +670,12 @@ export function RecurringExpensesSection() {
                         onChange={(event) => setPayAmount(event.target.value)}
                         className="w-full min-h-[38px] px-2.5 rounded-lg border border-line-strong bg-surface text-sm text-ink focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/20"
                       />
+                      <p className="text-[0.65rem] text-muted">
+                        Monto en {expense.currency === 'USD' ? 'US$' : '$'}.
+                        {(expense.currency ?? 'ARS') === 'USD'
+                          ? ' Si la cuenta es en pesos, se suma la cotización y los impuestos.'
+                          : ' Se debita en la moneda de la cuenta.'}
+                      </p>
                     </div>
 
                     <div className="grid gap-1">
@@ -586,7 +694,8 @@ export function RecurringExpensesSection() {
                         <option value="">Sin cuenta (sólo recordatorio)</option>
                         {accounts.map((option) => (
                           <option key={option.id} value={option.id}>
-                            {option.name} · {money(option.balance)}
+                            {option.name} ·{' '}
+                            {moneyWithCurrency(option.balance, option.currency ?? 'ARS')}
                           </option>
                         ))}
                       </select>

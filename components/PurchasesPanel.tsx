@@ -28,7 +28,10 @@ export function PurchasesPanel() {
     setBudgetDraft(budget === null ? '' : formatBudget(budget));
   }, [budget]);
 
-  const summary = useMemo(() => summarizePurchases(items, currentMonthKey()), [items]);
+  const summary = useMemo(
+    () => summarizePurchases(items, currentMonthKey(), prefs.usdRate),
+    [items, prefs.usdRate],
+  );
 
   const diff = budget === null ? 0 : budget - summary.boughtTotal;
   const over = budget !== null && diff < 0;
